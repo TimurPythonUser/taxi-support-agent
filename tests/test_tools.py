@@ -4,36 +4,11 @@ from datetime import date, timedelta
 
 import pytest
 
-from taxi_agent.agent.state import CaseStatus, Scenario, SessionState
-from taxi_agent.agent.tools import ToolContext, ToolExecutor
-from taxi_agent.config import Settings
+from taxi_agent.agent.state import CaseStatus, Scenario
 from taxi_agent.integrations.orders import StubOrderRepository
 from taxi_agent.integrations.pricing import StubPriceProvider, UnavailablePriceProvider
-from taxi_agent.kb import KnowledgeBase
-from taxi_agent.storage import SQLiteStore
-from taxi_agent.storage.sqlite import SQLiteTicketSink
 
 from .helpers import KYIV, NOW
-
-
-@pytest.fixture
-def make_executor(tmp_path):
-    kb = KnowledgeBase(Settings(_env_file=None).knowledge_base_dir)
-    tickets = SQLiteTicketSink(SQLiteStore(tmp_path / "t.db"))
-
-    def make(*user_messages: str, pricing=None) -> ToolExecutor:
-        ctx = ToolContext(
-            state=SessionState(session_id="s1", created_at=NOW),
-            messages=[{"role": "user", "content": m} for m in user_messages],
-            now=NOW,
-            orders=StubOrderRepository(KYIV, "UAH", clock=lambda: NOW),
-            pricing=pricing or StubPriceProvider("UAH"),
-            tickets=tickets,
-            kb=kb,
-        )
-        return ToolExecutor(ctx)
-
-    return make
 
 
 def args(**kwargs) -> str:
@@ -130,7 +105,7 @@ class TestPrice:
         await ex.run("update_case", args(scenario="trip_price", origin="Крещатик 22", destination="Вокзал"))
         result = await ex.run("get_trip_price", "{}")
         assert result["ok"] is False and "price" not in result
-        assert ex.ctx.state.consecutive_failures == 1
+        assert ex.ctx.turn_failed  # counted once per turn by the orchestrator
 
 
 class TestTicket:

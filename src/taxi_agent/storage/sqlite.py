@@ -146,8 +146,16 @@ class SQLiteStore:
         return [Ticket.model_validate_json(r["body"]) for r in rows]
 
     # --- demo cost guard --------------------------------------------------------------------
+    async def request_count(self, day: date) -> int:
+        return await self._run(self._request_count, day)
+
+    def _request_count(self, day: date) -> int:
+        with closing(self._connect()) as conn:
+            row = conn.execute("SELECT requests FROM daily_usage WHERE day = ?", (day.isoformat(),)).fetchone()
+        return row[0] if row else 0
+
     async def count_request(self, day: date) -> int:
-        """Increment and return today's number of LLM-backed requests."""
+        """Increment and return today's number of model calls."""
         return await self._run(self._count_request, day)
 
     def _count_request(self, day: date) -> int:

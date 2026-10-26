@@ -8,6 +8,8 @@ uv run python -m evals.run --only price_simple complaint_safety
 import argparse
 import asyncio
 import json
+import os
+import re
 import sys
 import tempfile
 import time
@@ -26,6 +28,7 @@ from taxi_agent.integrations.pricing import UnavailablePriceProvider
 
 ROOT = Path(__file__).parent
 LANGUAGES = {"ru": "Russian", "uk": "Ukrainian", "en": "English"}
+_THOUSANDS = re.compile(r"(?<=\d)[\s\u00a0\u202f,.](?=\d{3}(?!\d))")
 
 SIMULATOR_PROMPT = """\
 You are role-playing a CUSTOMER of a taxi service in Kyiv, chatting with the support agent in the app.
@@ -97,15 +100,42 @@ def _llm(settings: Settings) -> AsyncOpenAI:
 
 async def _chat(client: AsyncOpenAI, settings: Settings, messages: list[dict], *, json_mode: bool = False) -> str:
     extra: dict[str, Any] = {"response_format": {"type": "json_object"}} if json_mode else {}
+    if settings.llm_temperature is not None:
+        extra["temperature"] = 0.7 if not json_mode else 0.0
     resp = await client.chat.completions.create(
         model=settings.llm_model,
         messages=messages,
-        temperature=0.7 if not json_mode else 0.0,
-        max_tokens=800,
         extra_body=settings.llm_extra_body or None,
+        **{settings.llm_max_tokens_param: 800},
         **extra,
     )
     return (resp.choices[0].message.content or "").strip()
+
+
+_JUDGE_CLIENTS: dict[str, tuple[AsyncOpenAI, Settings]] = {}
+
+
+def _judge_target(client: AsyncOpenAI, settings: Settings) -> tuple[AsyncOpenAI, Settings]:
+    """The judge can run on another model so the agent is not graded by itself:
+    EVAL_JUDGE_MODEL=gpt-... EVAL_JUDGE_BASE_URL=https://api.openai.com/v1 EVAL_JUDGE_API_KEY=... (or OPENAI_API_KEY)
+    EVAL_JUDGE_EXTRA_BODY={} EVAL_JUDGE_MAX_TOKENS_PARAM=max_completion_tokens EVAL_JUDGE_TEMPERATURE=off"""
+    model = os.environ.get("EVAL_JUDGE_MODEL")
+    if not model:
+        return client, settings
+    if model in _JUDGE_CLIENTS:
+        return _JUDGE_CLIENTS[model]
+    judge_settings = settings.model_copy(
+        update={
+            "llm_model": model,
+            "llm_base_url": os.environ.get("EVAL_JUDGE_BASE_URL", "https://api.openai.com/v1"),
+            "llm_api_key": os.environ.get("EVAL_JUDGE_API_KEY") or os.environ.get("OPENAI_API_KEY", ""),
+            "llm_extra_body": json.loads(os.environ.get("EVAL_JUDGE_EXTRA_BODY", "{}")),
+            "llm_max_tokens_param": os.environ.get("EVAL_JUDGE_MAX_TOKENS_PARAM", "max_completion_tokens"),
+            "llm_temperature": None if os.environ.get("EVAL_JUDGE_TEMPERATURE") == "off" else 0.0,
+        }
+    )
+    _JUDGE_CLIENTS[model] = (_llm(judge_settings), judge_settings)
+    return _JUDGE_CLIENTS[model]
 
 
 async def simulate_customer(client, settings, scenario: dict, transcript: list[dict[str, str]]) -> str:
@@ -139,6 +169,7 @@ def _render_for_judge(transcript: list[dict[str, str]], events: list[list[dict]]
 
 async def judge(client, settings, transcript, events, language: str) -> dict[str, Any]:
     prompt = JUDGE_PROMPT.format(transcript=_render_for_judge(transcript, events), language=LANGUAGES[language])
+    client, settings = _judge_target(client, settings)
     raw = await _chat(client, settings, [{"role": "user", "content": prompt}], json_mode=True)
     try:
         verdict = json.loads(raw)
@@ -180,8 +211,9 @@ def check(expect: dict, state, agent_replies: list[str], events: list[list[dict]
         checks["tariff"] = case is not None and getattr(case, "tariff", None) == expect["tariff"]
     if "quoted" in expect:
         quote = getattr(case, "quote", None) if case else None
+        # "1,150" / "1 150" / "1150" are the same amount
         quoted = quote is not None and any(
-            str(quote.price) in r.replace(" ", "").replace(" ", "") for r in agent_replies
+            str(quote.price) in _THOUSANDS.sub("", r).replace(" ", "") for r in agent_replies
         )
         checks["quoted"] = quoted == expect["quoted"]
     if expect.get("first_reply_no_amounts"):
@@ -232,8 +264,10 @@ async def run_scenario(scenario: dict, run_no: int, base: Settings, max_turns: i
         tickets = await agent.tickets.list(state.session_id)
         checks = check(scenario.get("expect", {}), final_state, replies, events, tickets)
         verdict = await judge(client, settings, transcript, events, scenario["language"])
+        cached = final_state.cached_prompt_tokens
         usd = (
-            final_state.prompt_tokens * settings.llm_price_input_per_m
+            (final_state.prompt_tokens - cached) * settings.llm_price_input_per_m
+            + cached * settings.llm_price_cached_input_per_m
             + final_state.completion_tokens * settings.llm_price_output_per_m
         ) / 1_000_000
         passed = all(checks.values()) and all(v.get("pass") for v in verdict.values())

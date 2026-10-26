@@ -72,9 +72,9 @@ class OpenAICompatClient:
                 model=s.llm_model,
                 messages=messages,
                 tools=tools or openai.omit,
-                temperature=s.llm_temperature,
-                max_tokens=s.llm_max_tokens,
+                temperature=openai.omit if s.llm_temperature is None else s.llm_temperature,
                 extra_body=s.llm_extra_body or None,
+                **{s.llm_max_tokens_param: s.llm_max_tokens},
             )
         except openai.APIError as exc:
             raise LLMError(f"LLM request failed: {exc}") from exc

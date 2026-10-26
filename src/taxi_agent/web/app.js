@@ -143,9 +143,20 @@ async function send(text) {
     renderSession(data);
   } catch (err) {
     typing.remove();
-    const msg = err.status === 401 ? "Нужна авторизация — обновите страницу." : "Не удалось связаться с сервером. Попробуйте ещё раз.";
-    addMessage("error", msg);
-    if (err.status === 404) { storage.clear(); sessionId = null; }
+    if (err.status === 404) {
+      // the session is gone (e.g. the server data was reset): start over and keep what the customer typed
+      storage.clear();
+      sessionId = null;
+      resetView();
+      addMessage("error", "Этот диалог больше не найден на сервере — начат новый. Отправьте сообщение ещё раз.");
+      els.input.value = text;
+      autosize();
+    } else {
+      const msg = err.status === 401 ? "Нужна авторизация — обновите страницу."
+        : err.status === 422 ? "Сообщение пустое или слишком длинное."
+        : "Не удалось связаться с сервером. Попробуйте ещё раз.";
+      addMessage("error", msg);
+    }
     els.status.dataset.state = "active";
     els.status.textContent = "агент на связи";
   } finally {
@@ -360,5 +371,11 @@ $("new-session").addEventListener("click", () => {
   els.input.focus();
 });
 
-restore();
+// nothing can be sent until the saved dialog is restored, otherwise two sessions mix in one feed
+setBusy(true);
+restore().finally(() => {
+  setBusy(false);
+  els.status.dataset.state = els.status.dataset.state === "busy" ? "active" : els.status.dataset.state;
+  if (els.status.textContent === "печатает…") els.status.textContent = "агент на связи";
+});
 loadDemoTrips();

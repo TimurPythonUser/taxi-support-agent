@@ -18,6 +18,26 @@ _STOP = {
     "the", "a", "an", "of", "to", "in", "is", "and", "or", "for", "on", "my", "i",
 }  # fmt: skip
 
+# The articles are Russian. The model is told to search in Russian, but a query in Ukrainian or English
+# still finds something: common service words are expanded to their Russian counterparts.
+_QUERY_SYNONYMS = {
+    # en
+    "cancel": "отмена отменить", "cancellation": "отмена отменить", "cancelled": "отмена", "fee": "стоимость стоит",
+    "price": "цена стоимость", "cost": "стоимость стоит", "costs": "стоит", "waiting": "ожидание",
+    "wait": "ожидание", "lost": "забытые вещи", "forgot": "забыл вещь", "left": "забыл", "item": "вещь",
+    "complaint": "жалоба", "driver": "водитель", "payment": "оплата", "pay": "оплата", "cash": "наличные",
+    "pet": "животные", "pets": "животные", "dog": "собака животные", "cat": "кот животные",
+    "child": "детское кресло", "seat": "кресло", "airport": "аэропорт", "tariff": "тариф", "promo": "промокод",
+    "refund": "возврат разница", "overcharged": "завышенная стоимость", "route": "маршрут",
+    # uk
+    "скасування": "отмена отменить", "скасувати": "отменить отмена", "коштує": "стоит стоимость",
+    "вартість": "стоимость", "замовлення": "заказ", "очікування": "ожидание", "скарга": "жалоба",
+    "водій": "водитель", "водія": "водитель", "забув": "забыл", "забула": "забыла", "речі": "вещи",
+    "річ": "вещь", "тварини": "животные", "тварин": "животные", "кота": "кот животные", "собаку": "собака",
+    "готівка": "наличные", "картка": "карта", "аеропорт": "аэропорт", "крісло": "кресло", "скільки": "сколько",
+    "повернути": "вернуть", "маршрут": "маршрут",
+}  # fmt: skip
+
 
 @dataclass(frozen=True)
 class KBChunk:
@@ -63,7 +83,9 @@ class KnowledgeBase:
         return chunks
 
     def search(self, query: str, k: int = 3) -> list[tuple[KBChunk, float]]:
-        tokens = self._tokens(query)
+        words = _TOKEN.findall(query.lower())
+        expanded = " ".join([query, *(_QUERY_SYNONYMS[w] for w in words if w in _QUERY_SYNONYMS)])
+        tokens = self._tokens(expanded)
         if not tokens:
             return []
         scores = self._bm25.get_scores(tokens)

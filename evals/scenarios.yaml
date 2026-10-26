@@ -114,7 +114,7 @@
   title: Вопрос по правилам — отмена заказа
   language: ru
   opening: "Сколько стоит отменить заказ, если водитель уже назначен?"
-  persona: You only want to know the cancellation rules.
+  persona: You only want to know the cancellation rules. Once the agent answers, thank them and finish.
   expect: {mentions: ["40"], used_tools: ["search_knowledge_base"], ticket: false, handoff: false}
 
 - id: off_topic

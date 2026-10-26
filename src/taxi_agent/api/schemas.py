@@ -1,6 +1,6 @@
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from taxi_agent.agent.state import SessionState
 from taxi_agent.integrations.tickets import Ticket
@@ -8,6 +8,13 @@ from taxi_agent.integrations.tickets import Ticket
 
 class MessageIn(BaseModel):
     text: str = Field(min_length=1, max_length=2000)
+
+    @field_validator("text")
+    @classmethod
+    def not_blank(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("message is empty")
+        return value
 
 
 class EventOut(BaseModel):

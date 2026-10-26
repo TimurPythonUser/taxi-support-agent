@@ -49,8 +49,10 @@ def create_app(settings: Settings | None = None, agent: Agent | None = None) -> 
     async def session_payload(agent: Agent, state: SessionState) -> dict:
         case = state.active_case
         missing = case.missing_fields() if case and case.status == CaseStatus.COLLECTING else []
+        uncached = state.prompt_tokens - state.cached_prompt_tokens
         usd = (
-            state.prompt_tokens * settings.llm_price_input_per_m
+            uncached * settings.llm_price_input_per_m
+            + state.cached_prompt_tokens * settings.llm_price_cached_input_per_m
             + state.completion_tokens * settings.llm_price_output_per_m
         ) / 1_000_000
         return {
@@ -112,9 +114,12 @@ def create_app(settings: Settings | None = None, agent: Agent | None = None) -> 
 
     @app.get("/approach", include_in_schema=False)
     async def approach():
-        if not settings.approach_page.is_file():
+        # relative to the working directory (Docker: /app) or to the repository when run from source
+        candidates = [settings.approach_page, PACKAGE_DIR.parents[1] / settings.approach_page]
+        page = next((p for p in candidates if p.is_file()), None)
+        if page is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "approach page is not built")
-        return FileResponse(settings.approach_page, media_type="text/html")
+        return FileResponse(page, media_type="text/html")
 
     @app.get("/", include_in_schema=False)
     async def index():

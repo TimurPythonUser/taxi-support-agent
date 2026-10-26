@@ -54,6 +54,9 @@ LLM_BASE_URL=https://api.openai.com/v1
 LLM_MODEL=gpt-5.4-nano
 LLM_API_KEY=sk-...
 LLM_EXTRA_BODY={}
+# reasoning-модели OpenAI: другое имя лимита и без temperature
+# LLM_MAX_TOKENS_PARAM=max_completion_tokens
+# LLM_TEMPERATURE=none
 ```
 
 ## HTTP API
@@ -85,9 +88,14 @@ LLM_EXTRA_BODY={}
 ## Проверка качества
 
 ```bash
-uv run pytest                              # 120 офлайн-тестов, фейковая модель, ~5 с
+uv run pytest                              # 147 офлайн-тестов, фейковая модель, ~6 с
+uv run pytest qa                           # 68 QA-проб на слабые места (qa/PLAN.md), тоже офлайн
 uv run python -m evals.run --runs 3        # live-eval: 15 сценариев, симулятор клиента + LLM-судья
+uv run python -m qa.live.run --runs 2      # 14 враждебных live-сценариев (ложные тревоги, инъекции, бренды…)
 ```
+
+Судью eval можно запустить на другой модели, чтобы агент не оценивал сам себя:
+`EVAL_JUDGE_MODEL=<модель> EVAL_JUDGE_API_KEY=<ключ> uv run python -m evals.run` (по умолчанию — OpenAI API).
 
 Последний отчёт — [`evals/report.md`](evals/report.md): 45/45 прогонов, средняя стоимость диалога $0.002.
 
@@ -107,6 +115,7 @@ src/taxi_agent/
   cli.py                  taxi-agent chat / serve
 evals/                    live-сценарии, симулятор клиента, судья, отчёт
 tests/                    офлайн-тесты
+qa/                       QA-пробы на слабые места и враждебные live-сценарии (qa/PLAN.md)
 ```
 
 Ключевые решения:

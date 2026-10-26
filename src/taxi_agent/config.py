@@ -12,7 +12,9 @@ PACKAGE_DIR = Path(__file__).resolve().parent
 class Settings(BaseSettings):
     """All runtime configuration comes from environment variables or `.env`."""
 
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore", populate_by_name=True)
+    model_config = SettingsConfigDict(
+        env_file=".env", env_file_encoding="utf-8", extra="ignore", populate_by_name=True, env_parse_none_str="none"
+    )
 
     # Any OpenAI-compatible Chat Completions endpoint. DeepSeek is the default.
     llm_base_url: str = "https://api.deepseek.com"
@@ -21,12 +23,14 @@ class Settings(BaseSettings):
     # Provider-specific request fields. DeepSeek: disable reasoning — the task needs reliable
     # tool calls and short answers, not long chains of thought.
     llm_extra_body: dict[str, Any] = {"thinking": {"type": "disabled"}}
-    llm_temperature: float = 0.2
+    llm_temperature: float | None = 0.2  # None: not sent (OpenAI reasoning models reject it)
     llm_max_tokens: int = 700
+    llm_max_tokens_param: str = "max_tokens"  # OpenAI reasoning models expect "max_completion_tokens"
     llm_timeout_s: float = 40.0
     llm_max_retries: int = 2
     # USD per 1M tokens, only used to show the cost of a dialog in the UI.
     llm_price_input_per_m: float = 0.14
+    llm_price_cached_input_per_m: float = 0.0028  # DeepSeek bills prefix-cache hits at ~2% of the input price
     llm_price_output_per_m: float = 0.28
 
     timezone: str = "Europe/Kyiv"

@@ -151,6 +151,7 @@ class SessionState(BaseModel):
     active_case_id: str | None = None
     handoff: Handoff | None = None
     ticket_ids: list[str] = Field(default_factory=list)
+    urgent_ticket_id: str | None = None  # one safety incident gets one urgent ticket
 
     # guardrail counters
     user_turns: int = 0

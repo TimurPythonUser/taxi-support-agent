@@ -1,5 +1,7 @@
 """Wiring: the only place that knows which concrete adapters are used."""
 
+from datetime import datetime
+
 from taxi_agent.agent.orchestrator import Agent
 from taxi_agent.config import Settings
 from taxi_agent.integrations.orders import OrderRepository, StubOrderRepository
@@ -25,7 +27,7 @@ def build_agent(
         store=store,
         tickets=SQLiteTicketSink(store),
         orders=orders or StubOrderRepository(settings.tz, settings.currency, clock=clock),
-        pricing=pricing or StubPriceProvider(settings.currency),
+        pricing=pricing or StubPriceProvider(settings.currency, now=clock or (lambda: datetime.now(settings.tz))),
         kb=KnowledgeBase(settings.knowledge_base_dir),
         clock=clock,
     )

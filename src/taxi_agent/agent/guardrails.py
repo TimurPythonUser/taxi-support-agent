@@ -5,116 +5,257 @@ import re
 from typing import Any
 
 _FLAGS = re.IGNORECASE | re.UNICODE
+_APOS = "['’ʼ`]"  # phone keyboards type U+2019 / U+02BC, not ASCII
 
-# Customer explicitly asks for a human. "человек" alone is too broad ("хочу, чтобы этого человека уволили"),
-# so it counts only after verbs that mean "bring/connect" or in "talk to a person".
-_STAFF = r"(оператор\w*|менеджер\w*|специалист\w*|фахівц\w*)"
+# --- customer asks for a human ------------------------------------------------------------------
+# "человек" alone is too broad ("дайте контакты этого человека"), so it counts only after verbs that mean
+# "bring/connect" or in "talk to a person"; "хочу/дайте" need an explicit staff word.
+_STAFF = r"(?:оператор(?:а|у|ом|ів|ам)?|менеджер(?:а|у|ом)?|специалист(?:а|у|ом)?|фахівц(?:я|ю|ем)|фахівець)\b"
+_PERSON = r"(?:человек(?:а|у|ом)?|людин(?:а|у|ою|и)?|сотрудник(?:а|у|ом)?)\b"
 _HUMAN_REQUEST = [
     re.compile(p, _FLAGS)
     for p in (
-        r"\b(жив\w*|реальн\w*|настоящ\w*|справжн\w*)\s+(человек\w*|людин\w*|оператор\w*)",
-        r"\b(позов\w*|соедин\w*|переключ\w*|переве\w*|подключ\w*|дайте|з'?єдна\w*|покли\w*)\b\W+"
-        r"(?:\w+\W+){0,3}?(оператор\w*|менеджер\w*|специалист\w*|фахівц\w*|человек\w*|людин\w*|сотрудник\w*)",
-        r"\b(хочу|нужен|нужна|можно|потрібен|потрібна)\b\W+(?:\w+\W+){0,3}?" + _STAFF,
-        r"\b(поговор\w*|говорить|пообща\w*|поспілкува\w*)\s+(?:с|з|со)\s+(?:живым\s+|живою\s+)?"
-        r"(человеком|людиною|оператором|менеджером)",
-        r"\b(talk|speak|chat|connect)\w*\s+(?:me\s+)?(?:to|with)\s+(?:a\s+|an\s+|the\s+)?"
-        r"(human|person|operator|agent|manager|someone)",
-        r"\b(real|live)\s+(person|human|agent|operator)",
-        r"^\W*(оператор\w*|operator|human|людину|человека)\W*$",
+        r"\b(?:жив\w*|реальн\w*|настоящ\w*|справжн\w*)\s+(?:человек\w*|людин\w*|оператор\w*)",
+        r"\b(?:позов\w*|соедин\w*|з" + _APOS + r"?єдна\w*|переключ\w*|переве(?:д|ст)\w*|подключ\w*|покли\w*)\b\W+"
+        r"(?:\w+\W+){0,3}?(?:" + _STAFF + "|" + _PERSON + ")",
+        r"\b(?:хочу|нужен|нужна|нужно|можно|дайте|дай|давайте|потрібен|потрібна|дайте)\b\W+(?:\w+\W+){0,2}?" + _STAFF,
+        r"\b(?:поговор\w*|говорить|пообща\w*|поспілкува\w*|связаться|зв" + _APOS + r"?язатися)\s+(?:с|з|со)\s+"
+        r"(?:живым\s+|живою\s+|живим\s+)?(?:человеком|людиною|оператором|менеджером)",
+        r"\b(?:с|з|со)\s+(?:живым\s+|живою\s+|живим\s+)?(?:человеком|людиною|оператором)\s+"
+        r"(?:поговор\w*|пообща\w*|поспілкува\w*|связаться)",
+        r"\b(?:talk|speak|chat|connect)\w*\s+(?:me\s+)?(?:to|with)\s+(?:a\s+|an\s+|the\s+)?"
+        r"(?:human|person|operator|agent|manager|someone)",
+        r"\b(?:real|live)\s+(?:person|human|agent|operator)",
+        r"\b(?:need|want|get me)\s+(?:a\s+|an\s+|the\s+)?(?:human|person|operator|agent)\b",
+        r"\b(?:human|operator|person)\W*\s*please\b",
+        r"^\W*(?:оператор\w*|operator|human|людину|человека)\W*$",
     )
 ]
-
-# Safety incidents: accident, violence, threats, harassment, drunk driving (ru / uk / en stems).
-# Kept narrow on purpose: a false alarm freezes the dialog with an urgent handoff.
-_SAFETY = re.compile(
-    r"\b(дтп|авари\w*|аварі\w*|столкновени\w*|врезал\w*|врізав\w*|угрож\w*|погрож\w*|ударил\w*|"
-    r"вдарив\w*|избил\w*|побив\w*|напал\w*|напав\w*|насили\w*|насильств\w*|домога\w*|приставал\w*|"
-    r"лапал\w*|изнасил\w*|нож|ножом|пистолет\w*|оруж\w*|зброя\w*|пьян\w*|п'ян\w*|пʼян\w*|нетрезв\w*|"
-    r"под кайфом|наркот\w*|травм\w*|кровь|крови|кровью|accident|car crash|crashed into|threat\w*|"
-    r"assault\w*|harass\w*|drunk|weapon|knife|gun|attacked|injur\w*|hit me|grop\w*)\b",
+# "Не хочу оператора", "не надо соединять", "I don't need a human" — the request is negated.
+_NEGATED = re.compile(
+    r"(?:\b(?:не|ні|ни|don't|dont|do not|not|no need to)\s+$"
+    r"|\b(?:не надо|не нужно|не хочу|не стоит|не треба|не потрібно|без)\s+(?:(?:меня|мне|нас|вас|мене|нам)\s+)?$)",
     _FLAGS,
 )
-
-# Money amounts in a reply: "245 грн", "₴245", "UAH 245", "1 200 гривен".
-_AMOUNT_AFTER = re.compile(
-    r"(\d[\d\s ]{0,6}\d|\d)(?:[.,]\d+)?\s*(грн|гривн\w*|гривен\w*|uah|₴|руб\w*|₽|usd|\$|долл\w*|eur|€|евро)",
-    _FLAGS,
-)
-_AMOUNT_BEFORE = re.compile(r"(₴|\$|€|uah|usd|eur)\s*(\d[\d\s ]{0,6}\d|\d)", _FLAGS)
+_WHY_NOT = re.compile(r"\b(?:почему|зачем|чего|чому|навіщо|why)\s+(?:вы\s+|ви\s+)?не\s+$", _FLAGS)
 
 
 def wants_human(text: str) -> bool:
-    return any(p.search(text) for p in _HUMAN_REQUEST)
+    for pattern in _HUMAN_REQUEST:
+        for match in pattern.finditer(text):
+            before = text[max(0, match.start() - 30) : match.start()]
+            if _WHY_NOT.search(before) or not _NEGATED.search(before):
+                return True
+    return False
+
+
+# --- safety incidents ---------------------------------------------------------------------------
+# Narrow on purpose: a false alarm freezes the dialog with an urgent handoff. "Пьяный" counts only about
+# the driver, a knife or a gun only when someone threatens with it.
+_DRIVER = r"(?:водител\w*|водій|водія|водієм|таксист\w*|шофер\w*|driver)"
+_INTOXICATED = (
+    r"(?:пьян\w*|п"
+    + _APOS
+    + r"ян\w*|нетрезв\w*|напил\w*|напив\w*|выпивш\w*|под кайфом|под наркот\w*|drunk|intoxicated)(?!\w)"
+)
+_SAFETY = [
+    re.compile(p, _FLAGS)
+    for p in (
+        r"\b(?:дтп|авари(?:я|и|ю|ей)|аварі(?:я|ї|ю|єю)|столкновени\w*|зіткненн\w*|врезал\w*|врізав\w*|"
+        r"сбил(?!ся|ась|ось|ись)\w*|збив(?!ся|лася|лося|лися)\w*|врізал\w*|(?<!by )accident|car crash|crashed into|"
+        r"we crashed|car crashed|collision)\b",
+        r"\b(?:угрож\w*|погрож\w*|ударил\w*|вдарив\w*|избил\w*|побив\w*|напал\w*|напав\w*|насили\w*|"
+        r"насильств\w*|изнасил\w*|ножом|threat\w*|assault\w*|attacked|hit me|beat me|punched)\b",
+        r"\b(?:наставил|направил|достал|вытащил|показал|навів|дістав)\w*\s+(?:[\w-]+\s+){0,3}?"
+        r"(?:пистолет\w*|оружи\w*|нож\w*|ствол|пістолет\w*|зброю)",
+        r"\b(?:pulled|drew|pointed)\s+(?:a\s+)?(?:gun|knife|weapon)",
+        r"\b(?:домога\w*|пристал\w*|приставал\w*|приставав\w*|приста[её]т\w*|лапа(?:ет|л|ла|ли|ть)\w*|чіпля\w*|harass\w*|grop\w*|"
+        r"touched me|grabbed me)\b",
+        r"\b(?:не выпуска\w*|не выпустил\w*|не отпуска\w*|не відпуска\w*|не випуска\w*|запер\w*|"
+        r"заблокировал\w*\s+двер\w*|won't let me out|locked me in)",
+        r"\b(?:травм(?:а|ы|у|ой|е|и)|травмирова\w*|кровь(?!\s+из\s+носа)|крови|кровью|кров|injur\w*|bleeding)\b",
+        r"\b" + _DRIVER + r"\W+(?:\w+\W+){0,4}?" + _INTOXICATED,
+        r"\b" + _INTOXICATED + r"\s+" + _DRIVER,
+        r"\bdrunk driv\w*",
+        r"\bdriver\s+(?:was|is|seemed|seems|looked|looks)\s+(?:\w+\s+)?high\b",
+    )
+]
 
 
 def is_safety_incident(text: str) -> bool:
-    return bool(_SAFETY.search(text))
+    return any(p.search(text) for p in _SAFETY)
 
 
-_UK_WORDS = {"добрий", "дякую", "будь", "ласка", "забув", "забула", "що", "щось", "вже", "дуже", "зараз", "або"}
+# --- language -----------------------------------------------------------------------------------
+_UK_WORDS = {
+    "добрий", "добре", "дякую", "ласка", "забув", "забула", "що", "щось", "щоб", "вже", "дуже", "зараз",
+    "або", "чекаю", "вчора", "замовлення", "також", "треба",
+}  # fmt: skip
+_RU_WORDS = {
+    "что", "это", "нет", "да", "спасибо", "здравствуйте", "пожалуйста", "сколько", "вчера", "заказ", "привет",
+    "хорошо", "только", "уже", "очень", "сейчас",
+}  # fmt: skip
+
+
+_BRANDS = {"iphone", "ipad", "airpods", "macbook", "samsung", "xiaomi", "galaxy", "apple", "pro", "max", "mini", "plus"}
 
 
 def detect_language(text: str, previous: str) -> str:
-    """ru / uk / en by script and marker words; short replies like "да" or "ok" keep the previous language."""
-    lowered = text.lower()
-    letters = [ch for ch in lowered if ch.isalpha()]
-    if len(letters) < 6:
+    """ru / uk / en. Brand names (iPhone, AirPods) do not make a message English, and short replies without
+    language markers ("Так, правильно", "ok") keep the previous language."""
+    words = re.findall(r"[^\W\d_]+", text)
+    if sum(len(w) for w in words) < 6:
         return previous
-    if re.search("[іїєґ]", lowered):
-        return "uk"
-    cyrillic = sum(1 for ch in letters if "а" <= ch <= "я" or ch == "ё")
-    if cyrillic / len(letters) > 0.5:
-        if not re.search("[ыэъё]", lowered) and _UK_WORDS & set(re.findall(r"\w+", lowered)):
+    cyrillic = [w for w in words if re.search("[а-яёіїєґ]", w.lower())]
+    # capitalised words are names and brands ("iPhone", "Васильківська"); lowercase brands are listed
+    plain_latin = [w for w in words if re.fullmatch("[a-z]{2,}", w) and w not in _BRANDS]
+    if cyrillic and len(cyrillic) >= len(plain_latin):
+        common = [w.lower() for w in cyrillic if not w[0].isupper()] or [w.lower() for w in cyrillic]
+        letters = "".join(common)
+        ru = len(re.findall("[ыэъё]", letters)) + sum(w in _RU_WORDS for w in (x.lower() for x in cyrillic))
+        uk = len(re.findall("[іїєґ]", letters)) + sum(w in _UK_WORDS for w in (x.lower() for x in cyrillic))
+        if uk > ru:
             return "uk"
-        return "ru"
-    latin = sum(1 for ch in letters if "a" <= ch <= "z")
-    if latin / len(letters) > 0.5:
+        if ru > uk:
+            return "ru"
+        return previous if previous in {"ru", "uk"} else "ru"
+    if plain_latin:
         return "en"
     return previous
+
+
+# --- money amounts ------------------------------------------------------------------------------
+# A number is not glued to a neighbouring date or order number ("25.10 245 грн" → 245) and keeps its
+# thousands separator ("1,150 UAH" → 1150, "1 200 грн" → 1200).
+_NUM = r"(?<![\d.,:])(\d{1,3}(?:[   ,]\d{3})+(?!\d)|\d+)(?:[.,]\d{1,2}(?!\d))?"
+_CURRENCY = r"(?:грн|гривн\w*|гривен\w*|гривень|hryvni\w*|uah|₴|руб\w*|₽|usd|\$|долл\w*|dollars?|eur\b|euros?|€|евро)"
+_AMOUNT_AFTER = re.compile(_NUM + r"\s*" + _CURRENCY, _FLAGS)
+_AMOUNT_BEFORE = re.compile(r"(?:₴|\$|€|\buah|\busd|\beur)\s*" + _NUM, _FLAGS)
+# "будет стоить около 300" — a price sentence without a currency
+_UNITS = (
+    r"(?:мин\w*|хв\w*|км|km|час\w*|годин\w*|сек\w*|%|раз\w*|человек\w*|пассажир\w*|min\w*|hour\w*|day\w*|дн\w*|день)"
+)
+_AMOUNT_BARE = re.compile(
+    r"\b(?:стои\w*|стоимость\w*|обойд\w*|цена|цену|составит|составляет|коштує|коштуватиме|вартість|cost\w*|"
+    r"price|fare)(?:\s+(?:поездки|проезда|такси|поїздки|проїзду|of|the|ride|trip))*\s*[:—–-]?\s*"
+    r"(?:(?:будет|буде|составит|около|примерно|приблизительно|где-то|порядка|близько|приблизно|"
+    r"в|у|is|will|be|about|around|approximately|roughly)\s+)*" + _NUM + r"(?![:.]\d)(?!\s*" + _UNITS + ")",
+    _FLAGS,
+)
+_WORD_NUMBERS = {
+    # ru
+    "один": 1, "одна": 1, "два": 2, "две": 2, "три": 3, "четыре": 4, "пять": 5, "шесть": 6, "семь": 7,
+    "восемь": 8, "девять": 9, "десять": 10, "двадцать": 20, "тридцать": 30, "сорок": 40, "пятьдесят": 50,
+    "шестьдесят": 60, "семьдесят": 70, "восемьдесят": 80, "девяносто": 90, "сто": 100, "ста": 100,
+    "двести": 200, "двухсот": 200, "триста": 300, "трехсот": 300, "трёхсот": 300, "четыреста": 400,
+    "четырехсот": 400, "пятьсот": 500, "пятисот": 500, "шестьсот": 600, "семьсот": 700, "восемьсот": 800,
+    "девятьсот": 900, "тысяча": 1000, "тысячи": 1000, "тысяч": 1000, "тысячу": 1000,
+    # uk
+    "дві": 2, "чотири": 4, "п'ять": 5, "шість": 6, "сім": 7, "вісім": 8, "дев'ять": 9, "двадцять": 20,
+    "тридцять": 30, "п'ятдесят": 50, "шістдесят": 60, "сімдесят": 70, "вісімдесят": 80, "дев'яносто": 90,
+    "двісті": 200, "чотириста": 400, "п'ятсот": 500, "шістсот": 600, "сімсот": 700, "вісімсот": 800,
+    "дев'ятсот": 900, "тисяча": 1000, "тисячі": 1000, "тисяч": 1000, "одинадцять": 11, "дванадцять": 12,
+    "п'ятнадцять": 15, "двадцяти": 20,
+    "одиннадцать": 11, "двенадцать": 12, "пятнадцать": 15, "двадцати": 20, "тридцати": 30, "сорока": 40,
+    "пятидесяти": 50, "шестисот": 600, "семисот": 700, "восьмисот": 800, "девятисот": 900,
+    # en
+    "one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8, "nine": 9,
+    "ten": 10, "eleven": 11, "twelve": 12, "fifteen": 15, "twenty": 20, "thirty": 30, "forty": 40, "fifty": 50,
+    "sixty": 60, "seventy": 70, "eighty": 80, "ninety": 90, "hundred": 100, "thousand": 1000,
+}  # fmt: skip
+_WORDS_BEFORE_CURRENCY = re.compile(r"((?:[^\W\d_]+(?:['’ʼ][^\W\d_]+)?\s+){1,5})" + _CURRENCY, _FLAGS)
 
 
 def _to_int(raw: str) -> int:
     return int(re.sub(r"\D", "", raw))
 
 
+def _words_to_int(words: list[str]) -> int | None:
+    tail: list[str] = []
+    for word in reversed(words):
+        if word.replace("’", "'").replace("ʼ", "'") not in _WORD_NUMBERS:
+            break
+        tail.append(word.replace("’", "'").replace("ʼ", "'"))
+    if not tail:
+        return None
+    total = current = 0
+    for word in reversed(tail):
+        value = _WORD_NUMBERS[word]
+        if value == 1000:
+            total += max(current, 1) * 1000
+            current = 0
+        elif word == "hundred":
+            current = max(current, 1) * 100
+        else:
+            current += value
+    return total + current
+
+
 def mentioned_amounts(text: str) -> set[int]:
     amounts = {_to_int(m.group(1)) for m in _AMOUNT_AFTER.finditer(text)}
-    amounts |= {_to_int(m.group(2)) for m in _AMOUNT_BEFORE.finditer(text)}
+    amounts |= {_to_int(m.group(1)) for m in _AMOUNT_BEFORE.finditer(text)}
+    amounts |= {_to_int(m.group(1)) for m in _AMOUNT_BARE.finditer(text)}
+    for m in _WORDS_BEFORE_CURRENCY.finditer(text):
+        value = _words_to_int(m.group(1).lower().split())
+        if value:
+            amounts.add(value)
     return amounts
 
 
-def grounded_numbers(messages: list[dict[str, Any]]) -> set[int]:
-    """Money amounts that came from tool results: `price` fields and amounts with a currency in texts."""
+_COMPENSATION = re.compile(
+    r"(?:компенс\w*|возмещ\w*|верн\w*|возврат\w*|відшкод\w*|поверн\w*|refund\w*|compensat\w*)\W+(?:\w+\W+){0,4}$",
+    _FLAGS,
+)
+
+
+def customer_amounts(text: str) -> set[int]:
+    """Amounts the customer stated as facts ("списали 480 грн"); demands ("компенсируйте 5000 грн") excluded."""
     amounts: set[int] = set()
+    for pattern in (_AMOUNT_AFTER, _AMOUNT_BEFORE):
+        for m in pattern.finditer(text):
+            if not _COMPENSATION.search(text[max(0, m.start() - 60) : m.start()]):
+                amounts.add(_to_int(m.group(1)))
+    return amounts
 
-    def walk(node: Any, key: str = "") -> None:
-        if isinstance(node, dict):
-            for k, v in node.items():
-                walk(v, k)
-        elif isinstance(node, list):
-            for v in node:
-                walk(v, key)
-        elif key == "price" and isinstance(node, int | float):
-            amounts.add(int(node))
-        elif isinstance(node, str):
-            amounts.update(mentioned_amounts(node))
 
+def grounded_numbers(messages: list[dict[str, Any]], *, include_customer: bool = False) -> set[int]:
+    """Money amounts the reply may contain: quoted prices, amounts in knowledge-base texts and ticket
+    policies — and, outside price quotes, amounts the customer typed (e.g. "списали 480 грн").
+
+    Echoes of the case (update_case) and past trip fares (find_trip) do not count: otherwise the model
+    could "ground" a price by writing it into a case field or pass an old fare off as a new quote.
+    """
+    amounts: set[int] = set()
     for msg in messages:
-        if msg.get("role") == "tool":
-            try:
-                walk(json.loads(msg.get("content") or "{}"))
-            except ValueError:
-                continue
+        if msg.get("role") == "user" and include_customer:
+            amounts |= customer_amounts(str(msg.get("content", "")))
+        if msg.get("role") != "tool":
+            continue
+        try:
+            data = json.loads(msg.get("content") or "{}")
+        except ValueError:
+            continue
+        if not isinstance(data, dict):
+            continue
+        quote = data.get("quote")
+        if isinstance(quote, dict) and isinstance(quote.get("price"), int | float):
+            amounts.add(int(quote["price"]))
+        for item in data.get("results") or []:
+            if isinstance(item, dict):
+                amounts |= mentioned_amounts(str(item.get("text", "")))
+        for text in data.get("policy") or []:
+            amounts |= mentioned_amounts(str(text))
     return amounts
 
 
 def unverified_amounts(reply: str, grounded: set[int]) -> set[int]:
-    """Money amounts in the reply that no tool ever returned — i.e. invented by the model."""
+    """Money amounts in the reply that no trusted source gave — i.e. invented by the model."""
     return mentioned_amounts(reply) - grounded
 
 
-_DIGIT_GROUP = re.compile(r"\d+(?:[  -]\d+)*")
+# --- numbers typed by the customer --------------------------------------------------------------
+_DIGIT_GROUP = re.compile(r"\+?\d+(?:[  ()-]+\d+)*")
+_PHONE = re.compile(r"0\d{9}|380\d{9}")
 
 
 def number_candidates(text: str) -> set[str]:
@@ -127,8 +268,28 @@ def number_candidates(text: str) -> set[str]:
     return out
 
 
+def _customer_texts(messages: list[dict[str, Any]]) -> list[str]:
+    return [str(m.get("content", "")) for m in messages if m.get("role") == "user"]
+
+
 def is_grounded_order_id(order_id: str, messages: list[dict[str, Any]]) -> bool:
-    return any(order_id in number_candidates(str(m.get("content", ""))) for m in messages if m.get("role") == "user")
+    return any(order_id in number_candidates(text) for text in _customer_texts(messages))
+
+
+def looks_like_phone(digits: str) -> bool:
+    return bool(_PHONE.fullmatch(digits))
+
+
+def is_grounded_phone(phone_digits: str, messages: list[dict[str, Any]]) -> bool:
+    """The model may normalize "067 123 45 67" to "+380671234567": compare the last 9 digits."""
+    if len(phone_digits) < 9:
+        return False
+    tail = phone_digits[-9:]
+    return any(
+        len(candidate) >= 9 and candidate[-9:] == tail
+        for text in _customer_texts(messages)
+        for candidate in number_candidates(text)
+    )
 
 
 def tool_payload(result: dict[str, Any]) -> str:
@@ -187,6 +348,11 @@ FIXED_MESSAGES: dict[str, dict[str, str]] = {
         "ru": "Демо-стенд исчерпал дневной лимит запросов к модели. Попробуйте завтра.",
         "uk": "Демо-стенд вичерпав денний ліміт запитів до моделі. Спробуйте завтра.",
         "en": "The demo has reached its daily model request limit. Please try again tomorrow.",
+    },
+    "amount_fallback": {
+        "ru": "Извините, эту сумму я подтвердить не могу — её уточнит оператор при разборе обращения.",
+        "uk": "Вибачте, цю суму я підтвердити не можу — її уточнить оператор під час розгляду звернення.",
+        "en": "Sorry, I can't confirm that amount — the operator will check it when reviewing your request.",
     },
     "price_fallback": {
         "ru": "Извините, я не могу назвать точную стоимость без расчёта. Подскажите, пожалуйста, "

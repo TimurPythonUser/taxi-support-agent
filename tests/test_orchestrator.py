@@ -45,7 +45,7 @@ async def test_state_block_is_rerendered_after_each_tool(agent, fake_llm: FakeLL
     await agent.handle_message(sid, "Сколько стоит доехать от Крещатика 22?")
     first_system, second_system = (req[0]["content"] for req in fake_llm.requests)
     assert "Active case: none yet" in first_system
-    assert "origin: Крещатик 22" in second_system and "missing: destination" in second_system
+    assert 'origin: "Крещатик 22"' in second_system and "missing: destination" in second_system
     assert "Now: 2026-10-26 14:00 (Monday)" in second_system
 
 

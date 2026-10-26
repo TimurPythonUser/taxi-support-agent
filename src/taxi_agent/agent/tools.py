@@ -6,9 +6,10 @@ where every value is validated and order numbers are checked against what the cu
 """
 
 import json
+import logging
 import re
 from dataclasses import dataclass, field
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta
 from typing import Any
 
 from taxi_agent.agent import guardrails
@@ -29,6 +30,8 @@ from taxi_agent.integrations.orders import OrderRepository, Trip
 from taxi_agent.integrations.pricing import PriceProvider, PricingError
 from taxi_agent.integrations.tickets import TicketDraft, TicketSink
 from taxi_agent.kb import KnowledgeBase
+
+logger = logging.getLogger(__name__)
 
 
 def _fn(name: str, description: str, properties: dict[str, Any], required: list[str]) -> dict[str, Any]:
@@ -116,7 +119,13 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
         "Add details the customer gives AFTER a ticket was created (a better description of the item, a "
         "contact number, what else happened) to that existing ticket. Use this instead of update_case when "
         "the case already has a ticket; only a different item or incident starts a new case.",
-        {"note": {"type": "string", "description": "The new details, in Russian, for the operator."}},
+        {
+            "note": {"type": "string", "description": "The new details, in Russian, for the operator."},
+            "ticket_id": {
+                "type": "string",
+                "description": "Only when the details are for an earlier ticket of this chat, not the active case.",
+            },
+        },
         ["note"],
     ),
     _fn(
@@ -137,11 +146,17 @@ _TRIP_REF_FIELDS = {"order_id", "trip_date", "approx_time", "route"}
 _QUOTE_FIELDS = {"origin", "destination", "tariff"}
 _TEXT_LIMIT = 500
 _TIME = re.compile(r"^([01]?\d|2[0-3])[:.]([0-5]\d)$")
+# Whole words only: "справа" is not "права" (driving licence), "картонная" is not "карта".
 _VALUABLES = re.compile(
-    r"паспорт|документ|права|кошел|гаманец|деньг|грош|карт|card|wallet|passport|money|ноутбук|laptop|"
-    r"телефон|phone|ключ|key",
+    r"\b(?:паспорт\w*|документ\w*|прав(?:а|ами)|водительск\w*|удостоверени\w*|посвідченн\w*|"
+    r"кошел[её]к\w*|кошельк\w*|бумажник\w*|гаманц\w*|гаманець|портмоне|деньг\w*|налич\w*|грош\w*|"
+    r"карт(?:а|у|ой|ы|очк\w*|ка|ку|кой)|кредитк\w*|банковск\w*|"
+    r"телефон\w*|смартфон\w*|айфон\w*|iphone\w*|ноутбук\w*|макбук\w*|macbook\w*|laptop\w*|планшет\w*|ipad\w*|"
+    r"наушник\w*|навушник\w*|airpods\w*|ключ(?:и|ами|ей)?|ключі|wallet\w*|passport\w*|money|cash|cards?|"
+    r"phones?|keys?)\b",
     re.IGNORECASE,
 )
+_FUTURE_TOLERANCE = timedelta(minutes=15)
 
 TICKET_POLICY = {
     Scenario.LOST_ITEM: [("lost_items.md", "Сроки")],
@@ -159,6 +174,7 @@ class ToolContext:
     tickets: TicketSink
     kb: KnowledgeBase
     calls: list[str] = field(default_factory=list)
+    turn_failed: bool = False  # an external service failed during this turn (counted once per turn)
 
 
 def _trip_view(trip: Trip) -> dict[str, Any]:
@@ -209,10 +225,13 @@ def _next_step(case: LostItemCase | TripPriceCase | DriverComplaintCase) -> str:
             "ask the customer which of the matching trips is theirs (route or time), then save their choice "
             "with update_case(order_id=<order id of that trip>)"
         )
+    if case.found_trip and not case.trip_confirmed:
+        return (
+            "show the found trip (date, time, route) and ask ONLY whether it is the customer's trip — no other "
+            "question in this message; other details come after the confirmation"
+        )
     if missing:
         return f"ask the customer for: {', '.join(missing)}"
-    if case.found_trip and not case.trip_confirmed:
-        return "confirm the found trip with the customer (date, time, route), then create_operator_ticket"
     return "call create_operator_ticket"
 
 
@@ -231,7 +250,17 @@ class ToolExecutor:
         if name not in TOOL_NAMES:
             return {"ok": False, "error": f"unknown tool {name!r}"}
         handler = getattr(self, f"_{name}")
-        return await handler(args)
+        try:
+            return await handler(args)
+        except Exception:  # a failing integration (orders, pricing, tickets) must not crash the turn
+            logger.exception("tool %s failed", name)
+            self.ctx.turn_failed = True
+            return {
+                "ok": False,
+                "error": "the service behind this tool is temporarily unavailable",
+                "next_step": "apologize, say you can't check this right now and offer to try again later or "
+                "to pass the request to an operator. Do not invent any data.",
+            }
 
     # --- update_case -----------------------------------------------------------------------------
     async def _update_case(self, args: dict[str, Any]) -> dict[str, Any]:
@@ -245,6 +274,7 @@ class ToolExecutor:
         rejected: dict[str, str] = {}
         ignored: list[str] = []
 
+        previous = {name: getattr(case, name, None) for name in ("trip_date", "approx_time")}
         for name, raw in args.items():
             if raw is None or raw == "":
                 continue
@@ -261,6 +291,17 @@ class ToolExecutor:
             setattr(case, name, value)
             applied[name] = value.isoformat() if isinstance(value, date) else value
 
+        if not isinstance(case, TripPriceCase) and {"trip_date", "approx_time"} & applied.keys():
+            # each value can be valid alone while "today at 23:00" at 14:00 is not
+            now = self.ctx.now.replace(tzinfo=None)
+            if case.trip_date and case.approx_time:
+                moment = datetime.combine(case.trip_date, time.fromisoformat(case.approx_time))
+                if moment > now + _FUTURE_TOLERANCE:
+                    for name in ("trip_date", "approx_time"):
+                        if name in applied:
+                            setattr(case, name, previous[name])
+                            applied.pop(name)
+                            rejected[name] = "this date and time are still in the future; ask the customer to check"
         if not isinstance(case, TripPriceCase) and _lookup_invalidated(case, set(applied)):
             case.found_trip, case.trip_lookup_done, case.trip_confirmed = None, False, False
         if isinstance(case, TripPriceCase) and _QUOTE_FIELDS & applied.keys():
@@ -289,6 +330,8 @@ class ToolExecutor:
             digits = re.sub(r"\D", "", str(raw))
             if not 5 <= len(digits) <= 10:
                 raise ValueError("an order number has 5–10 digits; ask the customer to check it")
+            if guardrails.looks_like_phone(digits):
+                raise ValueError("this looks like a phone number, not an order number; ask for the order number")
             from_lookup = digits in getattr(case, "candidate_order_ids", [])
             if not from_lookup and not guardrails.is_grounded_order_id(digits, self.ctx.messages):
                 raise ValueError("neither the customer nor find_trip gave this number; ask the customer for it")
@@ -312,6 +355,11 @@ class ToolExecutor:
             return Tariff(str(raw).lower())
         if name == "reason_category":
             return ComplaintReason(str(raw).lower())
+        if name == "contact_phone":
+            digits = re.sub(r"\D", "", str(raw))
+            if not guardrails.is_grounded_phone(digits, self.ctx.messages):
+                raise ValueError("the customer did not write this phone number; ask them for it")
+            return f"+{digits}" if digits.startswith("380") else digits
         if name in {"safety_incident", "trip_confirmed"}:
             if not isinstance(raw, bool):
                 raise ValueError("must be true or false")
@@ -330,16 +378,22 @@ class ToolExecutor:
         if not isinstance(case, LostItemCase | DriverComplaintCase):
             return {"ok": False, "error": "no active lost-item or complaint case; call update_case first"}
         by_order = bool(case.order_id)
-        if by_order:
-            trip = await self.ctx.orders.get(case.order_id)
-            matches = [trip] if trip else []
-        elif case.trip_date and case.approx_time:
-            matches = await self.ctx.orders.search(case.trip_date, case.approx_time, case.route)
-        else:
+        wrong_order_id = None
+        if not by_order and not (case.trip_date and case.approx_time):
             return {
                 "ok": False,
                 "error": "save the order number or the trip date and time with update_case first",
             }
+        matches = []
+        if by_order:
+            trip = await self.ctx.orders.get(case.order_id)
+            if trip:
+                matches = [trip]
+            else:
+                # a wrong number must not block the search by date and time
+                wrong_order_id, case.order_id, by_order = case.order_id, None, False
+        if not by_order and case.trip_date and case.approx_time:
+            matches = await self.ctx.orders.search(case.trip_date, case.approx_time, case.route)
 
         case.trip_lookup_done = True
         case.found_trip = matches[0] if len(matches) == 1 else None
@@ -351,16 +405,21 @@ class ToolExecutor:
                 "No trip found. Tell the customer; if they are sure about the details, the ticket can still be "
                 "created and the operator will search manually."
             )
-            if by_order:
-                note = "No trip with this order number. Ask the customer to check the number or give date and time."
+            if wrong_order_id:
+                note = (
+                    f"No trip with order number {wrong_order_id}; it was removed from the case. Ask the customer "
+                    "to check the number or to give the trip date and approximate time."
+                )
         elif len(matches) == 1:
             note = (
-                "Trip found by order number."
+                "Trip found by order number and linked to the case; do not ask the customer to confirm it."
                 if by_order
-                else "One trip matches. Confirm it with the customer (date, time, route) before the ticket."
+                else "One trip matches. Ask ONLY whether it is the customer's trip before anything else."
             )
         else:
             note = "Several trips match. Ask the customer which one (route or exact time); do not guess."
+        if wrong_order_id and matches:
+            note = f"Order number {wrong_order_id} does not exist; searched by date and time instead. " + note
         return {
             "ok": True,
             "matches": [_trip_view(t) for t in matches[:5]],
@@ -383,7 +442,7 @@ class ToolExecutor:
             quote = await self.ctx.pricing.quote(case.origin, case.destination, case.tariff.value)
         except PricingError as exc:
             if exc.retryable:
-                state.consecutive_failures += 1
+                self.ctx.turn_failed = True
                 return {
                     "ok": False,
                     "error": "pricing service is temporarily unavailable",
@@ -395,7 +454,6 @@ class ToolExecutor:
                 "error": str(exc),
                 "next_step": "ask the customer to clarify the addresses (street and house number).",
             }
-        state.consecutive_failures = 0
         case.quote = quote
         case.status = CaseStatus.DONE
         return {
@@ -438,6 +496,8 @@ class ToolExecutor:
             return {"ok": False, "error": "call find_trip before creating the ticket"}
         if case.found_trip and not case.trip_confirmed:
             return {"ok": False, "error": "confirm the found trip with the customer first (date, time, route)"}
+        if not case.found_trip and len(case.candidate_order_ids) > 1:
+            return {"ok": False, "error": "several trips match; ask the customer which one is theirs first"}
 
         priority = Priority.NORMAL
         if isinstance(case, DriverComplaintCase) and (
@@ -464,6 +524,8 @@ class ToolExecutor:
         case.ticket_id = ticket.id
         case.status = CaseStatus.DONE
         state.ticket_ids.append(ticket.id)
+        if priority == Priority.URGENT:
+            state.urgent_ticket_id = ticket.id
         policy = [
             f"{section}: {chunk.text}"
             for source, section in TICKET_POLICY[case.scenario]
@@ -478,10 +540,17 @@ class ToolExecutor:
         if not note:
             return {"ok": False, "error": "note is empty"}
         state = self.ctx.state
+        requested = str(args.get("ticket_id") or "").strip()
+        if requested and requested not in state.ticket_ids:
+            return {"ok": False, "error": f"there is no ticket {requested} in this chat"}
+        # by default only the active case's ticket: a new complaint's details must not land in the lost-item ticket
         active = state.active_case
-        ticket_id = active.ticket_id if active and active.ticket_id else (state.ticket_ids or [None])[-1]
+        ticket_id = requested or (active.ticket_id if active else None)
         if ticket_id is None:
-            return {"ok": False, "error": "no ticket yet; collect the data and call create_operator_ticket"}
+            return {
+                "ok": False,
+                "error": "the active case has no ticket yet; collect its data and call create_operator_ticket",
+            }
         await self.ctx.tickets.add_note(ticket_id, note)
         return {"ok": True, "ticket_id": ticket_id, "next_step": "tell the customer the details were added"}
 
@@ -517,10 +586,41 @@ async def handoff(ctx: ToolContext, reason: str, priority: Priority) -> str:
         return state.handoff.ticket_id
     if state.safety_alert:
         priority = Priority.URGENT  # whoever triggers the handoff, a safety incident is always urgent
+        if state.urgent_ticket_id:  # one incident — one urgent ticket (e.g. an urgent complaint already exists)
+            state.status = SessionStatus.HANDED_OFF
+            state.handoff = Handoff(reason=reason, priority=priority, ticket_id=state.urgent_ticket_id, at=ctx.now)
+            return state.urgent_ticket_id
+    case = state.active_case
+    ticket_id = await _create_handoff_ticket(ctx, reason, priority)
+    state.status = SessionStatus.HANDED_OFF
+    state.handoff = Handoff(reason=reason, priority=priority, ticket_id=ticket_id, at=ctx.now)
+    if case is not None and case.status == CaseStatus.COLLECTING:
+        case.ticket_id = ticket_id
+    return ticket_id
+
+
+async def escalate_to_urgent(ctx: ToolContext, reason: str) -> str:
+    """A safety report in a session that is already with an operator at normal priority:
+    open an urgent ticket so the on-duty operator sees it (at night only urgent ones are handled)."""
+    state = ctx.state
+    if state.urgent_ticket_id:
+        return state.urgent_ticket_id
+    ticket_id = await _create_handoff_ticket(ctx, reason, Priority.URGENT)
+    previous = state.handoff.ticket_id if state.handoff else None
+    state.handoff = Handoff(reason=reason, priority=Priority.URGENT, ticket_id=ticket_id, at=ctx.now)
+    if previous:
+        await ctx.tickets.add_note(previous, f"Эскалировано: срочное обращение {ticket_id}")
+    return ticket_id
+
+
+async def _create_handoff_ticket(ctx: ToolContext, reason: str, priority: Priority) -> str:
+    state = ctx.state
     case = state.active_case
     fields: dict[str, Any] = {"reason": reason}
     if case is not None:
         fields["case"] = case.model_dump(mode="json", exclude={"id"})
+    if state.handoff:
+        fields["previous_ticket"] = state.handoff.ticket_id
     ticket = await ctx.tickets.create(
         TicketDraft(
             session_id=state.session_id,
@@ -532,9 +632,7 @@ async def handoff(ctx: ToolContext, reason: str, priority: Priority) -> str:
             transcript=_visible_transcript(ctx.messages),
         )
     )
-    state.status = SessionStatus.HANDED_OFF
-    state.handoff = Handoff(reason=reason, priority=priority, ticket_id=ticket.id, at=ctx.now)
     state.ticket_ids.append(ticket.id)
-    if case is not None and case.status == CaseStatus.COLLECTING:
-        case.ticket_id = ticket.id
+    if priority == Priority.URGENT:
+        state.urgent_ticket_id = ticket.id
     return ticket.id
