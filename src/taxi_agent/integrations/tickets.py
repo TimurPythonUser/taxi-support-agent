@@ -19,9 +19,12 @@ class TicketDraft(BaseModel):
 class Ticket(TicketDraft):
     id: str
     created_at: datetime
+    notes: list[str] = []  # details the customer added after the ticket was created
 
 
 class TicketSink(Protocol):
     async def create(self, draft: TicketDraft) -> Ticket: ...
+
+    async def add_note(self, ticket_id: str, note: str) -> None: ...
 
     async def list(self, session_id: str | None = None) -> list[Ticket]: ...

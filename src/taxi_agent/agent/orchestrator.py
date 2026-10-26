@@ -26,7 +26,7 @@ from taxi_agent.kb import KnowledgeBase
 from taxi_agent.llm import LLMClient, LLMError, Usage
 from taxi_agent.storage import SQLiteStore
 
-_PROGRESS_TOOLS = {"find_trip", "get_trip_price", "search_knowledge_base", "create_operator_ticket"}
+_PROGRESS_TOOLS = {"find_trip", "get_trip_price", "search_knowledge_base", "create_operator_ticket", "add_ticket_note"}
 
 
 class SessionNotFound(LookupError):
@@ -203,8 +203,10 @@ class Agent:
                 # one more round so the model phrases the handoff message itself
                 final = await self._complete(state, messages, tools=False)
                 return (final.content or "").strip() or guardrails.fixed("handed_off", state.language)
-        events.append(TurnEvent("error", "tool_loop_limit"))
-        return None
+        # Too many rounds: stop calling tools and let the model answer from what it already has.
+        events.append(TurnEvent("guardrail", "tool_loop_limit"))
+        final = await self._complete(state, messages, tools=False)
+        return (final.content or "").strip() or None
 
     async def _complete(self, state: SessionState, messages: list[dict[str, Any]], tools: bool = True):
         system = build_system_message(state, self.now(), self.settings.company_name)

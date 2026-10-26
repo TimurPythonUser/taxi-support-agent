@@ -112,6 +112,14 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
         ["summary"],
     ),
     _fn(
+        "add_ticket_note",
+        "Add details the customer gives AFTER a ticket was created (a better description of the item, a "
+        "contact number, what else happened) to that existing ticket. Use this instead of update_case when "
+        "the case already has a ticket; only a different item or incident starts a new case.",
+        {"note": {"type": "string", "description": "The new details, in Russian, for the operator."}},
+        ["note"],
+    ),
+    _fn(
         "handoff_to_operator",
         "Pass the whole conversation to a human operator right now. After this the agent stops answering.",
         {
@@ -158,6 +166,27 @@ def _case_view(case: LostItemCase | TripPriceCase | DriverComplaintCase) -> dict
     return case.model_dump(mode="json", exclude={"id"})
 
 
+def _lookup_invalidated(case: LostItemCase | DriverComplaintCase, applied: set[str]) -> bool:
+    """Does this update make the previous find_trip result stale?
+
+    A lookup by order number does not depend on date/time/route, and re-saving the found trip's own
+    date and time (models like to copy them into the case) changes nothing either.
+    """
+    changed = _TRIP_REF_FIELDS & applied
+    if not changed:
+        return False
+    if "order_id" in changed:
+        return not (case.found_trip and case.found_trip.order_id == case.order_id)
+    if case.order_id:
+        return False
+    trip = case.found_trip
+    if trip is None:
+        return True
+    same_date = "trip_date" not in changed or case.trip_date == trip.date
+    same_time = "approx_time" not in changed or case.approx_time == trip.time
+    return not (same_date and same_time)
+
+
 def _next_step(case: LostItemCase | TripPriceCase | DriverComplaintCase) -> str:
     missing = case.missing_fields()
     if isinstance(case, TripPriceCase):
@@ -167,7 +196,7 @@ def _next_step(case: LostItemCase | TripPriceCase | DriverComplaintCase) -> str:
             return "call get_trip_price"
         return "tell the customer the quoted price"
     if case.status == CaseStatus.DONE:
-        return f"ticket {case.ticket_id} already exists for this case"
+        return f"ticket {case.ticket_id} already exists; put any extra details into add_ticket_note"
     if not case.trip_lookup_done and (case.order_id or (case.trip_date and case.approx_time)):
         if missing:
             return f"call find_trip, then ask for: {', '.join(missing)}"
@@ -227,9 +256,9 @@ class ToolExecutor:
             if getattr(case, name) == value:
                 continue
             setattr(case, name, value)
-            applied[name] = value
+            applied[name] = value.isoformat() if isinstance(value, date) else value
 
-        if not isinstance(case, TripPriceCase) and _TRIP_REF_FIELDS & applied.keys():
+        if not isinstance(case, TripPriceCase) and _lookup_invalidated(case, set(applied)):
             case.found_trip, case.trip_lookup_done, case.trip_confirmed = None, False, False
         if isinstance(case, TripPriceCase) and _QUOTE_FIELDS & applied.keys():
             case.quote, case.status = None, CaseStatus.COLLECTING
@@ -436,6 +465,19 @@ class ToolExecutor:
             if chunk.source == source and chunk.section == section
         ]
         return {"ok": True, "ticket_id": ticket.id, "priority": priority.value, "policy": policy}
+
+    # --- add_ticket_note -------------------------------------------------------------------------
+    async def _add_ticket_note(self, args: dict[str, Any]) -> dict[str, Any]:
+        note = str(args.get("note", "")).strip()[:_TEXT_LIMIT]
+        if not note:
+            return {"ok": False, "error": "note is empty"}
+        state = self.ctx.state
+        active = state.active_case
+        ticket_id = active.ticket_id if active and active.ticket_id else (state.ticket_ids or [None])[-1]
+        if ticket_id is None:
+            return {"ok": False, "error": "no ticket yet; collect the data and call create_operator_ticket"}
+        await self.ctx.tickets.add_note(ticket_id, note)
+        return {"ok": True, "ticket_id": ticket_id, "next_step": "tell the customer the details were added"}
 
     # --- handoff_to_operator ---------------------------------------------------------------------
     async def _handoff_to_operator(self, args: dict[str, Any]) -> dict[str, Any]:

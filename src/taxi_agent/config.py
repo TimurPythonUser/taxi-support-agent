@@ -38,7 +38,7 @@ class Settings(BaseSettings):
     approach_page: Path = Path("docs/approach.html")
 
     history_window_user_turns: int = 12
-    max_tool_iterations: int = 6
+    max_tool_iterations: int = 8
     max_messages_per_session: int = 40
     daily_request_limit: int = 2000
     stall_turns_before_handoff: int = 3

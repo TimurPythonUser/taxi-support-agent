@@ -189,3 +189,20 @@ async def test_language_is_tracked(agent, fake_llm: FakeLLM):
     turn = await agent.handle_message(sid, "Hi, I left my backpack in a taxi")
     assert turn.state.language == "en"
     assert "Customer language: en" in fake_llm.requests[0][0]["content"]
+
+
+async def test_tool_loop_limit_ends_with_a_plain_answer(settings, fake_llm: FakeLLM):
+    from taxi_agent.factory import build_agent
+
+    settings.max_tool_iterations = 2
+    agent = build_agent(settings, llm=fake_llm, clock=lambda: NOW)
+    sid = await start(agent)
+    fake_llm.extend(
+        call("search_knowledge_base", query="ожидание"),
+        call("search_knowledge_base", query="ожидание"),
+        say("Первые 3 минуты ожидания бесплатны."),
+    )
+    turn = await agent.handle_message(sid, "Ожидание платное?")
+    assert turn.reply == "Первые 3 минуты ожидания бесплатны."
+    assert any(e.name == "tool_loop_limit" for e in turn.events)
+    assert fake_llm.tool_flags == [True, True, False]

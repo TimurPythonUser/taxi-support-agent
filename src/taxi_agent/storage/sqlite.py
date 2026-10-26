@@ -122,6 +122,18 @@ class SQLiteStore:
             )
         return ticket
 
+    async def add_ticket_note(self, ticket_id: str, note: str) -> None:
+        await self._run(self._add_ticket_note, ticket_id, note)
+
+    def _add_ticket_note(self, ticket_id: str, note: str) -> None:
+        with closing(self._connect()) as conn, conn:
+            row = conn.execute("SELECT body FROM tickets WHERE id = ?", (ticket_id,)).fetchone()
+            if row is None:
+                raise KeyError(ticket_id)
+            ticket = Ticket.model_validate_json(row["body"])
+            ticket.notes.append(note)
+            conn.execute("UPDATE tickets SET body = ? WHERE id = ?", (ticket.model_dump_json(), ticket_id))
+
     async def list_tickets(self, session_id: str | None = None) -> list[Ticket]:
         return await self._run(self._list_tickets, session_id)
 
@@ -156,6 +168,9 @@ class SQLiteTicketSink:
 
     async def create(self, draft: TicketDraft) -> Ticket:
         return await self._store.create_ticket(draft)
+
+    async def add_note(self, ticket_id: str, note: str) -> None:
+        await self._store.add_ticket_note(ticket_id, note)
 
     async def list(self, session_id: str | None = None) -> list[Ticket]:
         return await self._store.list_tickets(session_id)

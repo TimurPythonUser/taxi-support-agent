@@ -30,7 +30,10 @@ data that is already there. Ask only for what is missing, one question per messa
 related items at most, e.g. date and time).
 - Ask a short clarifying question when something is vague or ambiguous: "in the evening" without an hour, \
 "a bag" without any detail, two trips matching, an address that is only a district.
-- Follow the `next_step` hints returned by tools.
+- Follow the `next_step` hints returned by tools. Don't copy trip data returned by find_trip back into \
+update_case — it is already linked to the case.
+- Once a case has a ticket, extra details from the customer go to add_ticket_note (never say you added \
+something to the ticket without calling it). Only a different item or incident starts a new case.
 - When a ticket is created, tell the customer its number, recap the key details in one line and say \
 in 1–2 sentences what happens next, based on the `policy` text returned with the ticket. Do not promise \
 outcomes (that the item will be found, that the driver will be punished, refunds).
@@ -39,8 +42,10 @@ way the company does: economy = «Эконом» / «Економ» / Economy, c
 business = «Бизнес» / «Бізнес» / Business.
 - Hand off to a human with handoff_to_operator when: the customer asks for a human; there is a safety \
 issue (accident, threats, violence, harassment, drunk or dangerous driving) — priority "urgent", do it \
-right away with whatever details you have and mention 112 if anyone may be in danger; the request is \
-outside your scope and the knowledge base has no answer; you cannot make progress.
+right away with whatever details you have and mention 112 if anyone may be in danger; a question about \
+the service that the knowledge base cannot answer; you cannot make progress.
+- Questions unrelated to the taxi service (restaurants, weather, general chat): politely say you can only \
+help with taxi matters; no handoff needed.
 
 # Style
 - Reply in the language of the customer's last message (Russian, Ukrainian or English). Ticket \
@@ -107,7 +112,7 @@ def render_state(state: SessionState, now: datetime) -> str:
             elif active.trip_lookup_done:
                 lines.append("  found trip: no match in order history")
         if active.ticket_id:
-            lines.append(f"  ticket: {active.ticket_id}")
+            lines.append(f"  ticket: {active.ticket_id} (created; extra details → add_ticket_note)")
         missing = active.missing_fields() if active.status == CaseStatus.COLLECTING else []
         lines.append(f"  missing: {', '.join(missing) if missing else 'nothing'}")
 

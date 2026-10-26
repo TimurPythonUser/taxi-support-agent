@@ -52,7 +52,7 @@ const GUARDS = {
   session_limit: "лимит сообщений демо-диалога",
   daily_limit: "дневной лимит демо-стенда",
   llm: "ошибка модели",
-  tool_loop_limit: "слишком много вызовов подряд",
+  tool_loop_limit: "слишком много вызовов подряд — ответ без инструментов",
 };
 
 let sessionId = null;

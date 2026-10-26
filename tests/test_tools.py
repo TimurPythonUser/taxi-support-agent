@@ -198,3 +198,42 @@ async def test_unknown_tool_and_bad_json(make_executor):
     ex = make_executor("...")
     assert (await ex.run("delete_everything", "{}"))["ok"] is False
     assert (await ex.run("update_case", "{not json"))["ok"] is False
+
+
+class TestLookupStability:
+    async def test_copying_found_trip_data_keeps_the_lookup(self, make_executor):
+        ex = make_executor("заказ 729904, забыла паспорт")
+        await ex.run("update_case", args(scenario="lost_item", order_id="729904", item_description="паспорт"))
+        await ex.run("find_trip", "{}")
+        # models like to copy the found trip into the case; that must not force a second lookup
+        result = await ex.run(
+            "update_case",
+            args(scenario="lost_item", trip_date="2026-10-24", approx_time="22:30", route="ЖК → центр"),
+        )
+        case = ex.ctx.state.active_case
+        assert case.trip_lookup_done and case.found_trip and case.trip_confirmed
+        assert result["next_step"] == "call create_operator_ticket"
+
+    async def test_new_date_after_search_invalidates_the_lookup(self, make_executor):
+        ex = make_executor("вчера около 20:00")
+        await ex.run(
+            "update_case",
+            args(scenario="lost_item", trip_date="2026-10-25", approx_time="19:40", route="Крещатик вокзал"),
+        )
+        await ex.run("find_trip", "{}")
+        assert ex.ctx.state.active_case.found_trip
+        await ex.run("update_case", args(scenario="lost_item", approx_time="08:15"))
+        assert not ex.ctx.state.active_case.trip_lookup_done
+
+
+async def test_note_is_appended_to_existing_ticket(make_executor):
+    ex = make_executor("заказ 731842")
+    no_ticket = await ex.run("add_ticket_note", args(note="наклейка"))
+    assert no_ticket["ok"] is False
+    await ex.run("update_case", args(scenario="lost_item", order_id="731842", item_description="рюкзак"))
+    await ex.run("find_trip", "{}")
+    created = await ex.run("create_operator_ticket", args(summary="рюкзак"))
+    result = await ex.run("add_ticket_note", args(note="На рюкзаке наклейка с котом"))
+    assert result["ticket_id"] == created["ticket_id"]
+    [ticket] = await ex.ctx.tickets.list("s1")
+    assert ticket.notes == ["На рюкзаке наклейка с котом"]

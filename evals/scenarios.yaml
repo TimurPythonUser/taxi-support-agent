@@ -1,0 +1,125 @@
+# Live eval scenarios. A simulated customer (LLM) plays `persona`; the conversation starts with `opening`.
+# `expect` is checked deterministically against the final session state and the agent's replies.
+# Dates are relative to "today" (the order stub is anchored to now): yesterday = trips 731655, 731842, 731870.
+
+- id: lost_all_in_one
+  title: Забытая вещь — всё в первом сообщении
+  language: ru
+  opening: "Забыл чёрный рюкзак на заднем сиденье, заказ 731655"
+  persona: >
+    You left a black backpack on the back seat. Order number 731655 (you already said it).
+    If the agent shows you the trip, it is yours. After the agent says the request was created, add one detail:
+    "на рюкзаке наклейка с котом". Then finish.
+  expect: {scenario: lost_item, ticket: true, order_id: "731655", item_contains: ["рюкзак"], note_added: true, handoff: false, max_agent_turns: 3}
+
+- id: lost_by_date_time
+  title: Забытая вещь — без номера заказа, по дате и времени
+  language: ru
+  opening: "Здравствуйте, вчера вечером забыл в такси зонт"
+  persona: >
+    Yesterday around 8 pm you rode from Khreshchatyk street to the central railway station (say it in Russian:
+    "с Крещатика на вокзал"). You don't know the order number. The umbrella is black and folding.
+    Reveal details only when asked.
+  expect: {scenario: lost_item, ticket: true, found_order: "731842", item_contains: ["зонт"], handoff: false}
+
+- id: lost_no_match
+  title: Забытая вещь — поездки нет в истории
+  language: ru
+  opening: "Я позавчера ночью оставил в машине перчатки"
+  persona: >
+    The ride was the day before yesterday at about 3 am (03:00), from Podil to Obolon. You don't know the order number.
+    Gloves: brown leather. If the agent can't find the trip, insist that the date and time are right and ask
+    to pass the request on anyway.
+  expect: {scenario: lost_item, ticket: true, found_order: null, item_contains: ["перчат"], handoff: false}
+
+- id: lost_passport_uk
+  title: Забута річ українською — паспорт, підвищений пріоритет
+  language: uk
+  opening: "Добрий день! Я забула в таксі паспорт, номер замовлення 729904"
+  persona: >
+    You write in Ukrainian. You forgot your passport in a blue cover, probably on the back seat. Order 729904.
+  expect: {scenario: lost_item, ticket: true, order_id: "729904", priority: high, reply_language: uk, handoff: false}
+
+- id: price_simple
+  title: Стоимость — оба адреса сразу
+  language: ru
+  opening: "Сколько будет стоить поездка от Крещатика 22 до аэропорта Борисполь?"
+  persona: You just want to know the price. Economy is fine.
+  expect: {scenario: trip_price, quoted: true, ticket: false, handoff: false, max_agent_turns: 2}
+
+- id: price_missing_destination
+  title: Стоимость — адрес назначения уточняется
+  language: ru
+  opening: "Подскажите, сколько стоит такси от Оболонского проспекта 15?"
+  persona: You want to go to "ТРЦ Lavina Mall". Say it only when asked where to.
+  expect: {scenario: trip_price, quoted: true, destination_contains: ["lavina"], ticket: false, handoff: false}
+
+- id: price_tariff_change_en
+  title: Price in English, then comfort tariff
+  language: en
+  opening: "Hi, how much is a ride from Khreshchatyk 22 to the central railway station?"
+  persona: >
+    You write in English. After you get the first price, ask how much it would be in Comfort, then finish.
+  expect: {scenario: trip_price, quoted: true, tariff: comfort, reply_language: en, ticket: false, handoff: false}
+
+- id: price_vague_estimate
+  title: Провокация «сколько примерно» без адресов
+  language: ru
+  opening: "Сколько примерно стоит такси до аэропорта?"
+  persona: >
+    You are going from "ул. Антоновича, 50" to "Аэропорт Жуляны". Give the addresses when asked.
+    You hope the agent will just name a rough number.
+  expect: {scenario: trip_price, quoted: true, first_reply_no_amounts: true, ticket: false, handoff: false}
+
+- id: price_outage
+  title: Сервис расчёта цены недоступен
+  language: ru
+  pricing: unavailable
+  opening: "Сколько стоит доехать от Крещатика 22 до вокзала?"
+  persona: >
+    You want the price. If the agent cannot calculate it, ask once more to try again; then accept any outcome.
+  expect: {quoted: false, no_amounts: true, handoff: true}
+
+- id: complaint_rude
+  title: Жалоба — грубость, номер заказа известен
+  language: ru
+  opening: "Хочу пожаловаться на водителя, заказ 731655"
+  persona: The driver was rude to you the whole ride and smoked in the car. Explain when asked.
+  expect: {scenario: driver_complaint, ticket: true, order_id: "731655", reason: rude_behavior, priority: normal, handoff: false}
+
+- id: complaint_route_no_order
+  title: Жалоба — длинный маршрут, поиск поездки без номера
+  language: ru
+  opening: "Водитель повёз меня длинной дорогой, и вышло дороже, чем показывало приложение"
+  persona: >
+    It was yesterday morning around 8:15, from Obolonskyi avenue 15 to Boryspil airport. You don't have the order
+    number. If shown the trip, confirm it.
+  expect: {scenario: driver_complaint, ticket: true, found_order: "731655", reason: route_or_fare, handoff: false}
+
+- id: complaint_safety
+  title: Безопасность — нетрезвый водитель
+  language: ru
+  opening: "Водитель был пьяный и всю дорогу гнал на красный, мне было страшно"
+  persona: The ride was yesterday at 20:10, order 731870. You are safe now.
+  expect: {handoff: true, priority: urgent, mentions: ["112"]}
+
+- id: human_request
+  title: Клиент просит оператора
+  language: ru
+  opening: "Соедините меня с оператором, пожалуйста"
+  persona: You just want a human.
+  expect: {handoff: true, ticket: true}
+
+- id: faq_cancellation
+  title: Вопрос по правилам — отмена заказа
+  language: ru
+  opening: "Сколько стоит отменить заказ, если водитель уже назначен?"
+  persona: You only want to know the cancellation rules.
+  expect: {mentions: ["40"], used_tools: ["search_knowledge_base"], ticket: false, handoff: false}
+
+- id: off_topic
+  title: Вопрос не по теме
+  language: ru
+  opening: "Посоветуйте хороший ресторан в центре Киева"
+  persona: You want a restaurant recommendation. If the agent declines, thank them and finish.
+  expect: {ticket: false, no_amounts: true}
