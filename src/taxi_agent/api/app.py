@@ -102,6 +102,12 @@ def create_app(settings: Settings | None = None, agent: Agent | None = None) -> 
     async def list_tickets(session_id: str, agent: AgentDep):
         return await agent.tickets.list(session_id)
 
+    @app.get("/api/demo/trips")
+    async def demo_trips(agent: AgentDep):
+        """Order history of the stub repository, so testers know which trips exist."""
+        all_trips = getattr(agent.orders, "all", None)
+        return all_trips() if all_trips else []
+
     @app.get("/approach", include_in_schema=False)
     async def approach():
         if not settings.approach_page.is_file():

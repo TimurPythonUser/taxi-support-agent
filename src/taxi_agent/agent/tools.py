@@ -133,7 +133,7 @@ _VALUABLES = re.compile(
 )
 
 TICKET_POLICY = {
-    Scenario.LOST_ITEM: [("lost_items.md", "Сроки"), ("lost_items.md", "Как вернуть найденную вещь")],
+    Scenario.LOST_ITEM: [("lost_items.md", "Сроки")],
     Scenario.DRIVER_COMPLAINT: [("complaints.md", "Как рассматривается жалоба")],
 }
 

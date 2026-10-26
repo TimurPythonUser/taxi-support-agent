@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Opti Taxi · агент поддержки</title>
+  <meta name="description" content="Прототип AI-агента поддержки такси: забытые вещи, стоимость поездки, жалобы на водителя.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='3' fill='%23f5c518'/%3E%3Cpath d='M0 6h4v4H0zM8 6h4v4H8zM4 2h4v4H4zM12 2h4v4h-4zM4 10h4v4H4zM12 10h4v4h-4z' fill='%231a1c1f'/%3E%3C/svg%3E">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Onest:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="checker" aria-hidden="true"></span>
+      <span class="brand-name">Opti Taxi</span>
+      <span class="brand-sub">агент поддержки · прототип</span>
+    </div>
+    <nav class="topnav">
+      <a href="/approach" target="_blank" rel="noopener">Подход</a>
+      <a href="/docs" target="_blank" rel="noopener">API</a>
+      <button type="button" class="btn-ghost" id="new-session">Новый диалог</button>
+    </nav>
+  </header>
+
+  <main class="layout">
+    <section class="chat" aria-label="Чат с агентом">
+      <div class="chat-head">
+        <div>
+          <div class="chat-title">Чат поддержки</div>
+          <div class="chat-meta" id="chat-meta">новый диалог</div>
+        </div>
+        <span class="status-pill" id="status-pill" data-state="active">агент на связи</span>
+      </div>
+
+      <div class="messages" id="messages" aria-live="polite">
+        <div class="empty" id="empty">
+          <p class="empty-lead">Напишите как клиент такси — агент уточнит детали, посчитает стоимость или оформит обращение для оператора.</p>
+          <div class="starters" id="starters">
+            <button type="button" data-text="Здравствуйте, я вчера вечером забыл в такси зонт">Забыл вещь в такси</button>
+            <button type="button" data-text="Сколько будет стоить поездка от Крещатика 22 до аэропорта Борисполь?">Сколько стоит поездка?</button>
+            <button type="button" data-text="Хочу пожаловаться на водителя, заказ 731655">Жалоба на водителя</button>
+            <button type="button" data-text="Добрий день, я забула в таксі рюкзак, номер замовлення 729904">Українською</button>
+            <button type="button" data-text="Hi, how much is a ride from Khreshchatyk 22 to the central railway station?">English</button>
+            <button type="button" data-text="Водитель был пьяный и всю дорогу гнал на красный">Безопасность</button>
+          </div>
+          <details class="demo-data">
+            <summary>Тестовые поездки в истории заказов</summary>
+            <table id="demo-trips"><tbody><tr><td>загрузка…</td></tr></tbody></table>
+          </details>
+        </div>
+      </div>
+
+      <form class="composer" id="composer" autocomplete="off">
+        <textarea id="input" rows="1" maxlength="2000" placeholder="Сообщение агенту…" aria-label="Сообщение"></textarea>
+        <button type="submit" class="btn-send" id="send" aria-label="Отправить">
+          <svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true"><path d="M3 10h11M10 4l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </button>
+      </form>
+    </section>
+
+    <aside class="console" aria-label="Состояние агента">
+      <div class="console-band" aria-hidden="true"></div>
+
+      <section class="panel">
+        <div class="panel-head">
+          <h2>Карточка дела</h2>
+          <span class="panel-note" id="case-note">сценарий ещё не определён</span>
+        </div>
+        <div class="receipt" id="receipt">
+          <div class="receipt-empty">Агент заполнит карточку, как только поймёт, с чем вы пришли. Всё, что здесь есть, — данные, которые клиент реально сообщил или вернули сервисы.</div>
+        </div>
+        <div class="alert" id="handoff" hidden></div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <h2>Ход мысли агента</h2>
+          <span class="panel-note">вызовы инструментов и проверки</span>
+        </div>
+        <ol class="trace" id="trace"><li class="trace-empty">Пока пусто.</li></ol>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <h2>Обращения оператору</h2>
+          <span class="panel-note" id="tickets-count">0</span>
+        </div>
+        <div id="tickets" class="tickets"><div class="tickets-empty">Агент создаёт обращение, только когда собраны все обязательные данные.</div></div>
+      </section>
+
+      <section class="meter" aria-label="Расход модели">
+        <div class="meter-cell"><span class="meter-label">вход</span><span class="meter-value" id="m-in">0</span></div>
+        <div class="meter-cell"><span class="meter-label">из кэша</span><span class="meter-value" id="m-cache">0</span></div>
+        <div class="meter-cell"><span class="meter-label">выход</span><span class="meter-value" id="m-out">0</span></div>
+        <div class="meter-cell meter-total"><span class="meter-label">стоимость диалога</span><span class="meter-value" id="m-usd">$0.0000</span></div>
+      </section>
+    </aside>
+  </main>
+
+  <script src="/static/app.js" defer></script>
+</body>
+</html>
