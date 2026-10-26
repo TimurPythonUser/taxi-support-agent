@@ -1,0 +1,32 @@
+services:
+  taxi-agent:
+    build: .
+    image: taxi-agent:latest
+    container_name: taxi-agent
+    restart: unless-stopped
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      DATA_DIR: /data
+      # lets `docker compose up` work with the key exported in the shell instead of .env
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+    volumes:
+      - taxi-data:/data
+    ports:
+      # published on localhost only; in production traffic comes through the reverse proxy network
+      - "127.0.0.1:${HOST_PORT:-8000}:8000"
+    networks: [taxi-net]
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 256m
+    pids_limit: 128
+
+volumes:
+  taxi-data:
+
+networks:
+  taxi-net:
+    name: taxi-net

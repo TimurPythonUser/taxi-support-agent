@@ -1,0 +1,11 @@
+.git
+.venv
+.env
+tools
+data
+evals/runs
+.playwright-mcp
+.pytest_cache
+.ruff_cache
+**/__pycache__
+*.pyc

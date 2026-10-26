@@ -1,0 +1,453 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Агент поддержки такси — подход</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='3' fill='%23f5c518'/%3E%3Cpath d='M0 6h4v4H0zM8 6h4v4H8zM4 2h4v4H4zM12 2h4v4h-4zM4 10h4v4H4zM12 10h4v4h-4z' fill='%231a1c1f'/%3E%3C/svg%3E">
+<meta name="description" content="Архитектура и прототип AI-агента поддержки такси: забытые вещи, стоимость поездки, жалобы на водителя.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Onest:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root {
+  --page: #f2f0eb; --paper: #fffdf6; --card: #ffffff; --inset: #ece9e2;
+  --ink: #1b1d20; --ink-2: #3f4248; --ink-3: #6d7077; --ink-4: #9a9ca1;
+  --line: rgba(27,29,32,.1); --line-strong: rgba(27,29,32,.2);
+  --signal: #f5c518; --signal-soft: rgba(245,197,24,.2);
+  --go: #2f8a57; --go-soft: rgba(47,138,87,.12); --stop: #c8412f; --stop-soft: rgba(200,65,47,.1);
+  --amber: #b9741a; --amber-soft: rgba(227,155,45,.14);
+  --ring: 0 0 0 1px rgba(27,29,32,.07), 0 1px 2px -1px rgba(27,29,32,.08), 0 2px 6px rgba(27,29,32,.04);
+  --ui: "Onest", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, Consolas, monospace;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --page: #131518; --paper: #1c1f23; --card: #1f2226; --inset: #111316;
+    --ink: #ecebe6; --ink-2: #c9c8c3; --ink-3: #8f9196; --ink-4: #686b71;
+    --line: rgba(255,255,255,.09); --line-strong: rgba(255,255,255,.18);
+    --signal-soft: rgba(245,197,24,.14); --go: #5cc58a; --go-soft: rgba(92,197,138,.12);
+    --stop: #ef6a57; --stop-soft: rgba(239,106,87,.12); --amber: #e9a650; --amber-soft: rgba(233,166,80,.13);
+    --ring: 0 0 0 1px rgba(255,255,255,.08); color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --page: #131518; --paper: #1c1f23; --card: #1f2226; --inset: #111316;
+  --ink: #ecebe6; --ink-2: #c9c8c3; --ink-3: #8f9196; --ink-4: #686b71;
+  --line: rgba(255,255,255,.09); --line-strong: rgba(255,255,255,.18);
+  --signal-soft: rgba(245,197,24,.14); --go: #5cc58a; --go-soft: rgba(92,197,138,.12);
+  --stop: #ef6a57; --stop-soft: rgba(239,106,87,.12); --amber: #e9a650; --amber-soft: rgba(233,166,80,.13);
+  --ring: 0 0 0 1px rgba(255,255,255,.08); color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body { margin: 0; background: var(--page); color: var(--ink); font: 400 16px/1.6 var(--ui); -webkit-font-smoothing: antialiased; }
+a { color: inherit; text-decoration-color: var(--signal); text-decoration-thickness: 2px; text-underline-offset: 3px; }
+code, .mono { font-family: var(--mono); font-size: .88em; }
+code { background: var(--inset); padding: 1px 5px; border-radius: 4px; }
+.band { height: 8px; background: repeating-conic-gradient(var(--ink) 0 25%, var(--signal) 0 50%) 0 0 / 8px 8px; }
+.wrap { max-width: 1040px; margin: 0 auto; padding: 0 24px; }
+header.hero { padding: 56px 0 28px; }
+.kicker { font: 600 12px/1 var(--ui); letter-spacing: .1em; text-transform: uppercase; color: var(--ink-3); }
+h1 { font-size: clamp(30px, 5vw, 46px); line-height: 1.08; letter-spacing: -.025em; margin: 14px 0 16px; text-wrap: balance; font-weight: 700; }
+.lead { font-size: 19px; color: var(--ink-2); max-width: 760px; text-wrap: pretty; margin: 0; }
+.facts { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1px; background: var(--line); border-radius: 14px; overflow: hidden; margin: 32px 0 8px; box-shadow: var(--ring); }
+.fact { background: var(--paper); padding: 18px 20px; }
+.fact b { display: block; font: 600 30px/1.1 var(--mono); letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
+.fact span { color: var(--ink-3); font-size: 13px; }
+.links { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 20px; }
+.links a { text-decoration: none; padding: 9px 14px; border-radius: 999px; background: var(--card); box-shadow: var(--ring); font-weight: 500; font-size: 14px; }
+.links a.primary { background: var(--signal); color: #1b1d20; box-shadow: none; }
+nav.toc { position: sticky; top: 0; z-index: 5; background: color-mix(in srgb, var(--page) 88%, transparent); backdrop-filter: blur(8px); border-bottom: 1px solid var(--line); }
+nav.toc .wrap { display: flex; gap: 4px; overflow-x: auto; padding-top: 8px; padding-bottom: 8px; scrollbar-width: none; }
+nav.toc a { white-space: nowrap; text-decoration: none; font-size: 13px; color: var(--ink-3); padding: 6px 10px; border-radius: 6px; }
+nav.toc a:hover { background: var(--inset); color: var(--ink); }
+section { padding: 52px 0 12px; scroll-margin-top: 48px; }
+.num { font: 600 13px var(--mono); color: var(--ink-4); }
+h2 { font-size: 30px; line-height: 1.15; letter-spacing: -.02em; margin: 6px 0 14px; text-wrap: balance; }
+h3 { font-size: 18px; margin: 28px 0 8px; letter-spacing: -.01em; }
+p { max-width: 760px; text-wrap: pretty; }
+.answer { font-size: 18px; color: var(--ink); max-width: 800px; border-left: 3px solid var(--signal); padding-left: 16px; margin: 8px 0 22px; }
+ul, ol { max-width: 780px; padding-left: 22px; }
+li { margin: 6px 0; }
+li::marker { color: var(--ink-4); }
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.card { background: var(--card); border-radius: 14px; box-shadow: var(--ring); padding: 18px 20px; }
+.card h4 { margin: 0 0 6px; font-size: 15px; }
+.card p, .card li { font-size: 14.5px; color: var(--ink-2); }
+.card ul { padding-left: 18px; margin: 6px 0 0; }
+.tag { display: inline-block; font: 600 11px/1 var(--ui); letter-spacing: .04em; text-transform: uppercase; padding: 4px 8px; border-radius: 999px; background: var(--inset); color: var(--ink-2); }
+.tag.go { background: var(--go-soft); color: var(--go); } .tag.stop { background: var(--stop-soft); color: var(--stop); } .tag.amber { background: var(--amber-soft); color: var(--amber); }
+table { width: 100%; border-collapse: collapse; font-size: 14.5px; background: var(--card); border-radius: 12px; overflow: hidden; box-shadow: var(--ring); }
+th, td { text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--ink-3); font-weight: 600; background: var(--paper); }
+tr:last-child td { border-bottom: 0; }
+td.n { font-family: var(--mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.tablewrap { overflow-x: auto; margin: 14px 0; border-radius: 12px; }
+figure { margin: 22px 0; background: var(--paper); border-radius: 16px; box-shadow: var(--ring); padding: 18px; overflow-x: auto; }
+figcaption { font-size: 13px; color: var(--ink-3); margin-top: 10px; }
+svg { display: block; max-width: 100%; height: auto; }
+svg text { font-family: var(--ui); fill: var(--ink); }
+svg .t2 { fill: var(--ink-3); font-size: 12px; }
+svg .mono { font-family: var(--mono); }
+svg .box { fill: var(--card); stroke: var(--line-strong); }
+svg .box-core { fill: var(--signal-soft); stroke: var(--signal); }
+svg .box-soft { fill: var(--inset); stroke: none; }
+svg .box-go { fill: var(--go-soft); stroke: var(--go); }
+svg .box-stop { fill: var(--stop-soft); stroke: var(--stop); }
+svg .arrow { stroke: var(--ink-3); stroke-width: 1.5; fill: none; marker-end: url(#ah); }
+svg .arrow-d { stroke: var(--ink-4); stroke-width: 1.3; fill: none; stroke-dasharray: 4 4; marker-end: url(#ah); }
+svg #ah path { fill: var(--ink-3); }
+.guarantees { counter-reset: g; list-style: none; padding: 0; display: grid; grid-template-columns: 1fr 1fr; gap: 12px; max-width: none; }
+.guarantees li { counter-increment: g; background: var(--card); box-shadow: var(--ring); border-radius: 12px; padding: 14px 16px 14px 52px; position: relative; margin: 0; font-size: 14.5px; color: var(--ink-2); }
+.guarantees li::before { content: counter(g); position: absolute; left: 16px; top: 13px; width: 24px; height: 24px; border-radius: 6px; background: var(--signal); color: #1b1d20; font: 700 13px/24px var(--mono); text-align: center; }
+.guarantees b { color: var(--ink); }
+.steps { list-style: none; padding: 0; max-width: none; display: grid; gap: 10px; }
+.steps li { display: grid; grid-template-columns: 44px 1fr; gap: 14px; background: var(--card); border-radius: 12px; box-shadow: var(--ring); padding: 14px 16px; margin: 0; }
+.steps .s { font: 600 22px/1 var(--mono); color: var(--ink-4); padding-top: 2px; }
+.steps b { display: block; margin-bottom: 2px; }
+.steps span { color: var(--ink-2); font-size: 14.5px; }
+.receipt { font-family: var(--mono); font-size: 13px; background: var(--paper); border-radius: 12px; box-shadow: var(--ring); padding: 14px 16px; }
+.receipt .row { display: flex; gap: 6px; } .receipt .row i { flex: 1; border-bottom: 1px dotted var(--line-strong); transform: translateY(-4px); }
+.receipt .k { color: var(--ink-3); } .receipt .miss { color: var(--amber); }
+footer { padding: 48px 0 64px; color: var(--ink-3); font-size: 14px; }
+@media (max-width: 760px) {
+  .facts { grid-template-columns: 1fr 1fr; }
+  .grid2, .guarantees { grid-template-columns: 1fr; }
+  .wrap { padding: 0 16px; }
+  h2 { font-size: 25px; }
+}
+</style>
+</head>
+<body>
+<div class="band" aria-hidden="true"></div>
+
+<header class="hero">
+  <div class="wrap">
+    <div class="kicker">Тестовое задание · AI Backend Engineer</div>
+    <h1>AI-агент поддержки такси: архитектура и прототип</h1>
+    <p class="lead">Агент ведёт три сценария — забытая вещь, стоимость поездки, жалоба на водителя. Понимает свободный текст и отвечает на языке клиента, но всё, что он «знает», лежит в состоянии дела, которым управляет код: модель не может назвать цену без сервиса расчёта, создать обращение с пустыми полями или подставить номер заказа, которого клиент не писал.</p>
+    <div class="facts">
+      <div class="fact"><b>45/45</b><span>live-прогонов прошли проверки (15 сценариев × 3)</span></div>
+      <div class="fact"><b>101</b><span>офлайн-тест без сети и ключей</span></div>
+      <div class="fact"><b>$0.002</b><span>средняя стоимость диалога на DeepSeek Flash</span></div>
+      <div class="fact"><b>~4 с</b><span>медиана ответа с 1–2 вызовами инструментов</span></div>
+    </div>
+    <div class="links">
+      <a class="primary" href="https://taxi.167-233-175-131.nip.io/">Открыть демо-чат</a>
+      <a href="https://github.com/TimurPythonUser/taxi-support-agent">Код на GitHub</a>
+      <a href="#quality">Результаты eval</a>
+    </div>
+  </div>
+</header>
+
+<nav class="toc" aria-label="Разделы">
+  <div class="wrap">
+    <a href="#start">1. С чего начать</a>
+    <a href="#components">2. Компоненты и модель</a>
+    <a href="#memory">3. Знания и контекст</a>
+    <a href="#handoff">4. Уточнение и оператор</a>
+    <a href="#honesty">Как агент не выдумывает</a>
+    <a href="#quality">5. Качество</a>
+    <a href="#future">6. API и голос</a>
+    <a href="#risks">Риски</a>
+  </div>
+</nav>
+
+<main class="wrap">
+
+<!-- 1 -->
+<section id="start">
+  <div class="num">01</div>
+  <h2>С чего начну разработку и почему</h2>
+  <p class="answer">С контракта данных и набора эталонных диалогов, а не с промпта. Самые дорогие ошибки такого агента — неполное обращение, которое оператор будет переспрашивать, и выдуманный факт (цена, срок, «водителя накажут»). Обе ошибки ловятся только если заранее определено, что такое «готовое обращение», и есть способ это измерить.</p>
+  <ol class="steps">
+    <li><span class="s">1</span><div><b>Контракт сценариев</b><span>Для каждого сценария — обязательные поля, правила валидации и критерий готовности. «Забытая вещь» готова, когда есть номер заказа <em>или</em> дата + время, описание вещи и выполнен поиск поездки. Это неделя разговоров с операторами и разбор реальных обращений; в прототипе — <code>agent/state.py</code>.</span></div></li>
+    <li><span class="s">2</span><div><b>Eval-набор до кода</b><span>15–20 сценариев с ожидаемым итогом: какие поля, какой тикет, какая цена, когда оператор. Он становится регрессионным тестом на каждую правку промпта или смену модели.</span></div></li>
+    <li><span class="s">3</span><div><b>Детерминированное ядро</b><span>Состояние, инструменты, валидация, заглушки внешних систем — с unit-тестами на фейковой модели. Здесь живут все гарантии; они не зависят от того, какая LLM стоит сверху.</span></div></li>
+    <li><span class="s">4</span><div><b>LLM-слой и итерации по eval</b><span>Промпт, описания инструментов, подсказки <code>next_step</code>. Первый прогон дал 40/45 и нашёл три реальных бага — после исправлений 45/45 (см. раздел 5).</span></div></li>
+    <li><span class="s">5</span><div><b>Каналы и эксплуатация</b><span>HTTP API, веб-чат, CLI, Docker, лимиты стоимости. Дальше — реальные API платформы и голос через те же адаптеры.</span></div></li>
+  </ol>
+</section>
+
+<!-- 2 -->
+<section id="components">
+  <div class="num">02</div>
+  <h2>Компоненты, модель и библиотеки</h2>
+  <p class="answer">Гибрид: LLM понимает текст и формулирует ответы, а состояние, валидация и бизнес-правила — обычный код. Свой цикл «модель ↔ инструменты» на официальном SDK без фреймворков: в нём ~250 строк, каждую можно объяснить, и все гарантии проверяются тестами.</p>
+
+  <figure>
+    <svg viewBox="0 0 980 470" role="img" aria-labelledby="arch-t">
+      <title id="arch-t">Архитектура агента</title>
+      <defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z"/></marker></defs>
+      <!-- channels -->
+      <text x="20" y="28" class="t2">КАНАЛЫ</text>
+      <rect x="20" y="40" width="170" height="44" rx="10" class="box"/><text x="36" y="67">Веб-чат (демо)</text>
+      <rect x="20" y="94" width="170" height="44" rx="10" class="box"/><text x="36" y="121">CLI</text>
+      <rect x="20" y="148" width="170" height="44" rx="10" class="box-soft" stroke-dasharray="4 4"/><text x="36" y="175" class="t2">Приложение, Telegram</text>
+      <rect x="20" y="202" width="170" height="44" rx="10" class="box-soft"/><text x="36" y="229" class="t2">Голос: STT ⇄ TTS</text>
+      <!-- api -->
+      <rect x="240" y="94" width="150" height="98" rx="12" class="box"/>
+      <text x="256" y="124" font-weight="600">FastAPI</text>
+      <text x="256" y="146" class="t2 mono">POST /sessions</text>
+      <text x="256" y="164" class="t2 mono">/{id}/messages</text>
+      <text x="256" y="182" class="t2 mono">GET /{id}</text>
+      <path d="M190 62 L238 120" class="arrow"/><path d="M190 116 L238 136" class="arrow"/><path d="M190 170 L238 152" class="arrow-d"/><path d="M190 224 L238 170" class="arrow-d"/>
+      <!-- orchestrator -->
+      <rect x="440" y="30" width="320" height="240" rx="14" class="box-core"/>
+      <text x="460" y="58" font-weight="700">Orchestrator</text>
+      <rect x="460" y="72" width="280" height="40" rx="8" class="box"/><text x="474" y="97" font-size="13">До модели: оператор, безопасность</text>
+      <rect x="460" y="120" width="280" height="58" rx="8" class="box"/><text x="474" y="143" font-size="13">LLM ⇄ tools, до 8 раундов</text><text x="474" y="164" class="t2">состояние — в промпте каждого раунда</text>
+      <rect x="460" y="186" width="280" height="40" rx="8" class="box"/><text x="474" y="211" font-size="13">После модели: цены, тревога</text>
+      <text x="460" y="252" class="t2">SessionState — единственный источник правды</text>
+      <path d="M390 143 L438 143" class="arrow"/>
+      <!-- llm -->
+      <rect x="800" y="40" width="168" height="80" rx="12" class="box"/>
+      <text x="814" y="68" font-weight="600">LLM</text><text x="814" y="88" class="t2 mono">deepseek-flash</text><text x="814" y="106" class="t2">OpenAI-совместимый API</text>
+      <path d="M760 140 L798 92" class="arrow"/>
+      <!-- tools -->
+      <text x="440" y="306" class="t2">ИНСТРУМЕНТЫ (вход берут из состояния дела)</text>
+      <g font-size="12.5">
+        <rect x="440" y="316" width="140" height="34" rx="8" class="box"/><text x="452" y="338" class="mono">update_case</text>
+        <rect x="590" y="316" width="120" height="34" rx="8" class="box"/><text x="602" y="338" class="mono">find_trip</text>
+        <rect x="720" y="316" width="150" height="34" rx="8" class="box"/><text x="732" y="338" class="mono">get_trip_price</text>
+        <rect x="440" y="358" width="190" height="34" rx="8" class="box"/><text x="452" y="380" class="mono">search_knowledge_base</text>
+        <rect x="640" y="358" width="200" height="34" rx="8" class="box"/><text x="652" y="380" class="mono">create_operator_ticket</text>
+        <rect x="440" y="400" width="150" height="34" rx="8" class="box"/><text x="452" y="422" class="mono">add_ticket_note</text>
+        <rect x="600" y="400" width="190" height="34" rx="8" class="box"/><text x="612" y="422" class="mono">handoff_to_operator</text>
+      </g>
+      <path d="M748 270 L775 312" class="arrow"/>
+      <!-- adapters -->
+      <text x="20" y="300" class="t2">АДАПТЕРЫ (Protocol) — сейчас заглушки, потом API платформы</text>
+      <g font-size="13">
+        <rect x="20" y="312" width="190" height="36" rx="8" class="box-soft"/><text x="32" y="335">PriceProvider</text>
+        <rect x="220" y="312" width="190" height="36" rx="8" class="box-soft"/><text x="232" y="335">OrderRepository</text>
+        <rect x="20" y="356" width="190" height="36" rx="8" class="box-soft"/><text x="32" y="379">TicketSink</text>
+        <rect x="220" y="356" width="190" height="36" rx="8" class="box-soft"/><text x="232" y="379">KnowledgeBase (BM25)</text>
+        <rect x="20" y="400" width="390" height="36" rx="8" class="box-soft"/><text x="32" y="423">SessionStore — SQLite (прод: Redis + Postgres)</text>
+      </g>
+      <path d="M438 360 L412 360" class="arrow"/>
+    </svg>
+    <figcaption>Каналы ходят в один HTTP API. Оркестратор обёрнут детерминированными проверками до и после модели; инструменты работают через адаптеры, поэтому интеграция с платформой — это новая реализация интерфейса, а не правка агента.</figcaption>
+  </figure>
+
+  <h3>Модель</h3>
+  <p><b>DeepSeek Flash</b> (<code>deepseek-flash</code>) с выключенным reasoning (<code>thinking: disabled</code>). Задача — надёжные вызовы инструментов и короткие ответы на русском и украинском, длинные цепочки рассуждений тут не нужны: без них ответ быстрее и дешевле. Подключение через официальный <code>openai</code> SDK к OpenAI-совместимому API, поэтому смена модели — это строка в <code>.env</code>, без правки кода.</p>
+  <div class="tablewrap"><table>
+    <thead><tr><th>Модель</th><th>$ за 1M (вход / выход)</th><th>Комментарий</th></tr></thead>
+    <tbody>
+      <tr><td>DeepSeek Flash <span class="tag go">выбрана</span></td><td class="n">~0.14 / 0.28</td><td>Дешёвый выход, авто-кэш префикса (видно в демо: ~40% входа из кэша). Минус — серверы в Китае: для реальных персональных данных нужен комплаенс или маскирование.</td></tr>
+      <tr><td>Claude Haiku 5.5</td><td class="n">0.10 / 0.50</td><td>Та же ценовая лига, сильный tool use. Подключается тем же способом через совместимый эндпоинт или отдельным адаптером.</td></tr>
+      <tr><td>GPT-5.4 nano</td><td class="n">~0.20 / 1.25</td><td>Дороже на выходе; разумный запасной провайдер.</td></tr>
+    </tbody>
+  </table></div>
+  <p>Цены по открытым источникам на октябрь 2026, перед продом сверить с прайсами провайдеров. При ~$0.002 за диалог стоимость модели не главный критерий — решают качество tool calling и задержка, поэтому выбор подтверждается eval-набором, а не прайсом.</p>
+
+  <h3>Библиотеки</h3>
+  <div class="grid2">
+    <div class="card"><h4>Взял</h4><ul>
+      <li><b>FastAPI + Pydantic v2</b> — API, валидация, модели состояния с сериализацией в JSON.</li>
+      <li><b>openai SDK</b> — единый клиент для любого совместимого провайдера, ретраи и таймауты.</li>
+      <li><b>rank-bm25 + snowball</b> — поиск по базе знаний без внешних сервисов.</li>
+      <li><b>SQLite</b> — сессии и тикеты в прототипе, за интерфейсом.</li>
+      <li><b>pytest, ruff, uv, Docker</b> — тесты, линт, воспроизводимая сборка.</li>
+    </ul></div>
+    <div class="card"><h4>Сознательно не взял</h4><ul>
+      <li><b>LangChain / LangGraph</b> — для одного агента с шестью инструментами абстракции дороже пользы: сложнее отлаживать и контролировать, что уходит в модель.</li>
+      <li><b>Векторная БД</b> — четыре страницы правил; эмбеддинги понадобятся на реальной базе знаний (раздел 3).</li>
+      <li><b>Свободный JSON-вывод вместо tools</b> — tool calling даёт типизированные аргументы и естественный цикл «действие → результат».</li>
+    </ul></div>
+  </div>
+</section>
+
+<!-- 3 -->
+<section id="memory">
+  <div class="num">03</div>
+  <h2>База знаний и контекст диалога</h2>
+  <p class="answer">Контекст диалога — это не только история сообщений. Главная память агента — структурированное состояние дела, которое код хранит и каждый раунд подставляет в системный промпт. Поэтому агент не переспрашивает и не теряет факты, даже когда старые реплики выпадают из окна.</p>
+  <div class="grid2">
+    <div>
+      <h3>Три слоя контекста</h3>
+      <ol>
+        <li><b>Состояние дела</b> — сценарий, слоты, найденная поездка, расчёт цены, номер тикета, что ещё не хватает. Пишется только через инструменты с валидацией; рендерится в блок <code>CASE STATE</code> перед каждым вызовом модели.</li>
+        <li><b>Окно истории</b> — последние 12 реплик клиента со всеми вызовами инструментов. Режется по границе сообщения клиента, чтобы не оторвать вызов инструмента от результата.</li>
+        <li><b>Хранилище</b> — состояние и полная история по <code>session_id</code> в SQLite; в проде горячие сессии в Redis с TTL, архив и тикеты в Postgres.</li>
+      </ol>
+    </div>
+    <div>
+      <h3>Так модель видит состояние</h3>
+      <div class="receipt">
+        <div class="k">Now: 2026-10-26 14:05 (Monday), Europe/Kyiv</div>
+        <div>Active case: lost item [collecting]</div>
+        <div class="row"><span class="k">order_id</span><i></i><span>—</span></div>
+        <div class="row"><span class="k">trip_date</span><i></i><span>2026-10-25</span></div>
+        <div class="row"><span class="k">approx_time</span><i></i><span>20:00</span></div>
+        <div class="row"><span class="k">item_description</span><i></i><span>чёрный складной зонт</span></div>
+        <div class="k">found trip: #731842 19:40 Крещатик → вокзал</div>
+        <div class="miss">  (NOT yet confirmed by customer)</div>
+        <div class="k">missing: nothing</div>
+      </div>
+    </div>
+  </div>
+
+  <h3>База знаний</h3>
+  <p>Правила сервиса (сроки поиска вещей, тарифы, ожидание, отмена, порядок жалоб) — markdown-файлы, нарезанные по разделам <code>##</code>, поиск BM25 с русским стеммингом и усилением заголовка раздела. Агент обращается к ней через <code>search_knowledge_base</code> и отвечает только по найденному; если ничего не найдено, инструмент прямо говорит «не отвечай из общих знаний». Тексты о сроках, которые агент сообщает после создания тикета, тоже приходят из базы, а не из промпта.</p>
+  <p>На реальном объёме (сотни статей, внутренние регламенты операторов):</p>
+  <ul>
+    <li>гибридный поиск BM25 + эмбеддинги и реранкер; contextual retrieval — к каждому чанку дописывается контекст документа;</li>
+    <li>у каждой статьи владелец и дата ревизии, версии в git; eval-набор вопросов к базе (Recall@k, faithfulness) гоняется при каждом изменении;</li>
+    <li>отдельно — «динамические» знания (тарифы по городам, акции) не в текстах, а через API платформы, чтобы не устаревали.</li>
+  </ul>
+</section>
+
+<!-- 4 -->
+<section id="handoff">
+  <div class="num">04</div>
+  <h2>Когда уточнять, а когда звать оператора</h2>
+  <p class="answer">Уточнять — когда не хватает обязательного поля или значение неоднозначно; это решает код по состоянию дела, а не модель «по ощущению». Передавать оператору — по детерминированным триггерам, которые срабатывают без участия модели, плюс когда вопрос о сервисе не покрыт базой знаний.</p>
+  <div class="grid2">
+    <div class="card">
+      <h4><span class="tag amber">уточнить</span></h4>
+      <ul>
+        <li>Обязательное поле пустое — инструмент возвращает <code>missing_fields</code> и <code>next_step</code>; агент спрашивает по одному пункту.</li>
+        <li>Значение не проходит валидацию: «вечером» вместо часа, дата в будущем, номер заказа не из 5–10 цифр — валидатор отклоняет с подсказкой, что спросить.</li>
+        <li>Найдено несколько поездок — агент просит выбрать по маршруту или времени, не угадывает.</li>
+        <li>Поездка найдена по дате и времени — агент подтверждает её у клиента перед тикетом.</li>
+        <li>Адрес не распознан сервисом расчёта — просит улицу и дом.</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h4><span class="tag stop">оператор</span></h4>
+      <ul>
+        <li><b>Клиент просит человека</b> — регулярное выражение, модель даже не вызывается.</li>
+        <li><b>Безопасность</b> (ДТП, угрозы, насилие, домогательства, нетрезвый водитель) — срочный приоритет, упоминание 112; если модель не передала сама, код передаёт принудительно.</li>
+        <li><b>Нет прогресса</b> 3 реплики подряд — недостающие поля не заполняются.</li>
+        <li><b>Два сбоя подряд</b> — модели или внешнего API.</li>
+        <li><b>Вопрос о сервисе вне базы знаний</b> — решает модель через <code>handoff_to_operator</code>. Вопросы не о такси (рестораны, погода) — вежливый отказ без оператора.</li>
+      </ul>
+    </div>
+  </div>
+  <p>После передачи сессия замораживается: на следующие сообщения клиент получает фиксированный ответ, а оператор — тикет с полями дела, причиной и последними репликами. Приоритеты: <span class="tag">normal</span> · <span class="tag amber">high</span> для документов, денег, карт и техники · <span class="tag stop">urgent</span> для безопасности.</p>
+</section>
+
+<!-- honesty -->
+<section id="honesty">
+  <div class="num">✱</div>
+  <h2>Как агент не выдумывает</h2>
+  <p class="answer">Промпт просит не выдумывать, но держат это пять механизмов в коде — каждый покрыт тестом.</p>
+  <ol class="guarantees">
+    <li><b>Действия берут вход из состояния, а не из аргументов модели.</b> <code>get_trip_price</code>, <code>find_trip</code>, <code>create_operator_ticket</code> без аргументов данных: адреса и номер заказа сначала должны пройти через <code>update_case</code>.</li>
+    <li><b>Grounding номера заказа.</b> Номер принимается, только если эти цифры есть в сообщениях клиента или вернулись из <code>find_trip</code>. Модель пыталась «угадать» номер по маршруту — проверка отклонила.</li>
+    <li><b>Output-guard цен.</b> Каждая сумма в ответе сверяется с числами из результатов инструментов. Чужая сумма — ответ переписывается; не вышло — безопасный шаблон.</li>
+    <li><b>Тикет собирает код.</b> Структурированные поля обращения берутся из состояния; модель пишет только короткое резюме. Без обязательных полей тикет не создаётся.</li>
+    <li><b>Политики только из базы знаний.</b> Сроки, порядок рассмотрения, условия — из <code>search_knowledge_base</code> или текста политики, который возвращает инструмент тикета.</li>
+    <li><b>Проверяется снаружи.</b> LLM-судья в eval ищет любые факты, не подтверждённые клиентом или инструментами: 45/45 чисто.</li>
+  </ol>
+</section>
+
+<!-- 5 -->
+<section id="quality">
+  <div class="num">05</div>
+  <h2>Как проверять качество ответов</h2>
+  <p class="answer">Три уровня: офлайн-тесты гарантий на фейковой модели, live-eval с симулированным клиентом и проверкой итогового состояния, LLM-судья по рубрике. В проде к ним добавляются продуктовые метрики и разметка выборки диалогов.</p>
+
+  <div class="grid2">
+    <div class="card"><h4>1. Офлайн — 101 тест, ~4 с</h4><p>Фейковая модель проигрывает сценарий вызовов. Проверяется то, что не должно зависеть от модели: валидация, grounding, блокировка тикета, guardrails, передача оператору, окно истории, API. Идут в CI на каждый коммит.</p></div>
+    <div class="card"><h4>2. Live-eval — 15 сценариев × 3</h4><p>Клиента играет LLM с заданной персоной и фактами («номер не помню, было около восьми»). Итог проверяется кодом: сценарий, поля, номер найденной поездки, цена в ответе ровно из сервиса, тикет, приоритет, язык. Затем судья оценивает переписку по 6 критериям.</p></div>
+  </div>
+
+  <h3>Результаты на <span class="mono">deepseek-flash</span></h3>
+  <div class="tablewrap"><table>
+    <thead><tr><th>Сценарий</th><th>Прошло</th><th>Реплик агента</th></tr></thead>
+    <tbody>
+      <tr><td>Забытая вещь — всё в первом сообщении, потом доп. деталь в тикет</td><td class="n">3/3</td><td class="n">2.0</td></tr>
+      <tr><td>Забытая вещь — без номера, по дате и времени, две похожие поездки</td><td class="n">3/3</td><td class="n">3.7</td></tr>
+      <tr><td>Забытая вещь — поездки нет в истории, тикет с пометкой для ручного поиска</td><td class="n">3/3</td><td class="n">2.7</td></tr>
+      <tr><td>Забута річ українською — паспорт, підвищений пріоритет</td><td class="n">3/3</td><td class="n">1.3</td></tr>
+      <tr><td>Стоимость — оба адреса сразу</td><td class="n">3/3</td><td class="n">2.0</td></tr>
+      <tr><td>Стоимость — назначение уточняется</td><td class="n">3/3</td><td class="n">3.0</td></tr>
+      <tr><td>Price in English, then Comfort tariff</td><td class="n">3/3</td><td class="n">2.0</td></tr>
+      <tr><td>Провокация «сколько примерно?» без адресов</td><td class="n">3/3</td><td class="n">2.0</td></tr>
+      <tr><td>Сервис цены недоступен — без цифр, затем оператор</td><td class="n">3/3</td><td class="n">2.0</td></tr>
+      <tr><td>Жалоба — грубость, номер известен</td><td class="n">3/3</td><td class="n">2.0</td></tr>
+      <tr><td>Жалоба — длинный маршрут, поиск поездки без номера</td><td class="n">3/3</td><td class="n">3.0</td></tr>
+      <tr><td>Безопасность — нетрезвый водитель, срочно оператору</td><td class="n">3/3</td><td class="n">1.0</td></tr>
+      <tr><td>Клиент просит оператора</td><td class="n">3/3</td><td class="n">1.0</td></tr>
+      <tr><td>Вопрос по правилам — отмена заказа</td><td class="n">3/3</td><td class="n">1.7</td></tr>
+      <tr><td>Вопрос не по теме</td><td class="n">3/3</td><td class="n">1.0</td></tr>
+    </tbody>
+  </table></div>
+  <p>Судья: «не выдумывает», «не переспрашивает», «уточняет при неясности», «один вопрос за раз», «язык клиента», «тон» — по 45/45. Средняя стоимость диалога вместе с вызовами инструментов — $0.002.</p>
+  <p><b>Первый прогон был 40/45, и это полезнее итоговой цифры.</b> Eval нашёл три реальных дефекта, которые unit-тесты не ловили: детали, добавленные после создания тикета, уходили в новое пустое дело (агент при этом говорил клиенту «добавил») — появился <code>add_ticket_note</code>; модель копировала найденную поездку обратно в дело, это сбрасывало поиск и зацикливало вызовы — поправлено правило инвалидации; при исчерпании раундов клиент видел «технический сбой», хотя тикет был создан — теперь финальный ответ без инструментов. Каждый случай закреплён unit-тестом.</p>
+
+  <h3>В проде</h3>
+  <ul>
+    <li><b>Продуктовые метрики:</b> доля решённых без оператора, доля передач и их причины, полнота тикета (оператору не пришлось переспрашивать), повторные обращения в течение 24 ч, CSAT после диалога, p95 задержки, стоимость диалога.</li>
+    <li><b>Аудит:</b> еженедельная выборка диалогов на разметку; каждый тикет, который оператор исправил, превращается в новый eval-сценарий.</li>
+    <li><b>Выкатка:</b> eval как обязательный gate в CI для промптов и смены модели; новая модель — сначала shadow-режим на реальном трафике, потом A/B на доле сессий.</li>
+    <li><b>Наблюдаемость:</b> каждый ход уже пишет структурированные события (инструмент, аргументы, результат, мс) — их в OpenTelemetry-трейсы с <code>session_id</code>.</li>
+  </ul>
+</section>
+
+<!-- 6 -->
+<section id="future">
+  <div class="num">06</div>
+  <h2>Подключение API платформы и голосового общения</h2>
+  <p class="answer">Агент изолирован от внешнего мира интерфейсами, а от канала — HTTP API. Поэтому интеграция с платформой — это реализации <code>OrderRepository</code>, <code>PriceProvider</code> и <code>TicketSink</code>, а голос — ещё один канал перед тем же оркестратором со своим профилем ответов.</p>
+
+  <h3>API платформы</h3>
+  <div class="tablewrap"><table>
+    <thead><tr><th>Интерфейс</th><th>Сейчас</th><th>В проде</th></tr></thead>
+    <tbody>
+      <tr><td><code>OrderRepository</code></td><td>фикстуры с датами относительно «сейчас»</td><td>API заказов, <b>фильтр по customer_id из токена приложения</b>: агент видит только поездки этого клиента, а телефон и имя не нужно спрашивать</td></tr>
+      <tr><td><code>PriceProvider</code></td><td>детерминированная формула</td><td>API тарификации с геокодингом; ошибки «адрес не найден» и «сервис недоступен» уже различаются агентом</td></tr>
+      <tr><td><code>TicketSink</code></td><td>SQLite</td><td>helpdesk / CRM (очередь операторов) через API или вебхук, идемпотентный ключ на сессию</td></tr>
+      <tr><td><code>SessionStore</code></td><td>SQLite</td><td>Redis (горячие сессии, блокировки) + Postgres (история), несколько воркеров без состояния</td></tr>
+    </tbody>
+  </table></div>
+  <p>Каналы (чат в приложении, Telegram, WhatsApp) — тонкие адаптеры над <code>POST /sessions/{id}/messages</code>; операторская консоль получает тикеты и подхватывает замороженную сессию.</p>
+
+  <h3>Голос</h3>
+  <figure>
+    <svg viewBox="0 0 980 190" role="img" aria-labelledby="voice-t">
+      <title id="voice-t">Голосовой контур</title>
+      <defs><marker id="ah2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="currentColor"/></marker></defs>
+      <rect x="10" y="50" width="140" height="70" rx="12" class="box"/><text x="26" y="80" font-weight="600">Телефония</text><text x="26" y="100" class="t2">SIP / Twilio</text>
+      <rect x="190" y="50" width="174" height="70" rx="12" class="box"/><text x="206" y="80" font-weight="600">Streaming STT</text><text x="206" y="100" class="t2">VAD, частичные гипотезы</text>
+      <rect x="390" y="30" width="220" height="110" rx="14" class="box-core"/><text x="408" y="60" font-weight="700">Тот же оркестратор</text><text x="408" y="82" class="t2">voice-профиль промпта:</text><text x="408" y="100" class="t2">короткие фразы, цифры по одной,</text><text x="408" y="118" class="t2">подтверждение адресов</text>
+      <rect x="650" y="50" width="150" height="70" rx="12" class="box"/><text x="666" y="80" font-weight="600">Streaming TTS</text><text x="666" y="100" class="t2">первый звук ~200 мс</text>
+      <rect x="840" y="50" width="130" height="70" rx="12" class="box"/><text x="856" y="80" font-weight="600">Клиент</text><text x="856" y="100" class="t2">barge-in</text>
+      <g style="color: var(--ink-3)"><path d="M150 85 L188 85" stroke="currentColor" stroke-width="1.5" marker-end="url(#ah2)"/><path d="M364 85 L388 85" stroke="currentColor" stroke-width="1.5" marker-end="url(#ah2)"/><path d="M610 85 L648 85" stroke="currentColor" stroke-width="1.5" marker-end="url(#ah2)"/><path d="M800 85 L838 85" stroke="currentColor" stroke-width="1.5" marker-end="url(#ah2)"/></g>
+      <text x="390" y="172" class="t2">caller ID → customer_id → история заказов без вопросов; DTMF для номера заказа</text>
+    </svg>
+    <figcaption>Голос переиспользует состояние, инструменты и guardrails целиком; меняются только транспорт и стиль ответов.</figcaption>
+  </figure>
+  <p>Главная проблема голоса — задержка. Сейчас ход с 1–2 вызовами инструментов занимает ~4 с (медиана на живой модели), для голоса нужно &lt;1.5 с до первого звука. План:</p>
+  <ul>
+    <li>стриминг ответа модели сразу в TTS и короткая фраза-заполнитель («сейчас посмотрю поездку»), пока работают инструменты;</li>
+    <li>меньше раундов: <code>update_case</code> и действие в одном ответе модели (параллельные tool calls), подсказки <code>next_step</code> уже к этому подталкивают;</li>
+    <li>самая быстрая модель с хорошим tool use по eval; альтернатива — realtime speech-to-speech модель с теми же инструментами;</li>
+    <li>голосовые особенности: номер заказа диктуется и переспрашивается по цифрам, адрес подтверждается, можно перебить агента (barge-in), DTMF как запасной ввод.</li>
+  </ul>
+</section>
+
+<!-- risks -->
+<section id="risks">
+  <div class="num">✱</div>
+  <h2>Риски и что дальше</h2>
+  <div class="grid2">
+    <div class="card"><h4>Персональные данные</h4><p>Адреса и детали поездок уходят провайдеру модели. Для DeepSeek (серверы в Китае) — маскирование адресов и телефонов до отправки или модель в нужной юрисдикции / self-hosted. Слой модели заменяется через <code>.env</code>.</p></div>
+    <div class="card"><h4>Prompt injection</h4><p>Клиентский текст не может вызвать привилегированных действий: инструменты не меняют заказы и деньги, вход действий берётся из провалидированного состояния, номер заказа проходит grounding. В проде — ещё и фильтр по customer_id.</p></div>
+    <div class="card"><h4>Масштабирование</h4><p>Прототип — один процесс (блокировки сессий в памяти, SQLite). Дальше: несколько stateless-воркеров, Redis для сессий и блокировок, очередь для тикетов.</p></div>
+    <div class="card"><h4>Стоимость</h4><p>~$0.002 за диалог → около $200 на 100 тыс. диалогов в месяц на модели. В демо стоят лимиты: 40 сообщений на сессию и дневной лимит запросов.</p></div>
+  </div>
+</section>
+
+</main>
+
+<footer>
+  <div class="wrap">Прототип: Python 3.13, FastAPI, DeepSeek Flash. Запуск, тесты и eval — в README репозитория. Данные о заказах, тарифы и правила в демо вымышлены.</div>
+</footer>
+</body>
+</html>
