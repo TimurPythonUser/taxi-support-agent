@@ -1,0 +1,51 @@
+[project]
+name = "taxi-agent"
+version = "0.1.0"
+description = "AI customer-support agent for a taxi service: lost items, trip price, driver complaints"
+authors = [
+    { name = "TimurPythonUser", email = "timurteresuk3@gmail.com" }
+]
+requires-python = ">=3.13"
+dependencies = [
+    "fastapi>=0.162.0",
+    "httpx>=0.28.1",
+    "openai>=3.37.0",
+    "pydantic>=2.14.1",
+    "pydantic-settings>=2.16.1",
+    "pyyaml>=6.0.3",
+    "rank-bm25>=0.2.2",
+    "rich>=15.0.0",
+    "snowballstemmer>=3.1.1",
+    "tzdata>=2026.5",
+    "uvicorn[standard]>=0.54.0",
+]
+
+[project.scripts]
+taxi-agent = "taxi_agent.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.12.13,<0.13.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.1",
+    "ruff>=0.17.2",
+]
+
+[tool.ruff]
+line-length = 120
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "ASYNC", "RUF"]
+ignore = ["RUF001", "RUF002", "RUF003"]  # cyrillic text in prompts and fixtures is intentional
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+
+[tool.ruff.lint.per-file-ignores]
+"src/taxi_agent/integrations/orders.py" = ["E501"]  # fixture table is aligned on purpose

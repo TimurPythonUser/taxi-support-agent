@@ -1,0 +1,28 @@
+# secrets and local-only files
+.env
+tools/
+
+# runtime data (SQLite)
+data/
+*.db
+*.sqlite3
+
+# eval outputs (report.md is committed, raw runs are not)
+evals/runs/
+
+# python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+dist/
+build/
+*.egg-info/
+
+# editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+.playwright-mcp/
