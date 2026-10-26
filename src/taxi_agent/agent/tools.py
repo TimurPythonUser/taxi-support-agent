@@ -130,6 +130,9 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
     ),
 ]
 
+TOOL_NAMES = frozenset(t["function"]["name"] for t in TOOL_SCHEMAS)
+# only fields declared in the update_case schema; internal ones (found_trip, quote, flags) are set by code
+_WRITABLE = frozenset(TOOL_SCHEMAS[0]["function"]["parameters"]["properties"]) - {"scenario"}
 _TRIP_REF_FIELDS = {"order_id", "trip_date", "approx_time", "route"}
 _QUOTE_FIELDS = {"origin", "destination", "tariff"}
 _TEXT_LIMIT = 500
@@ -225,9 +228,9 @@ class ToolExecutor:
                 raise ValueError("arguments must be a JSON object")
         except ValueError as exc:
             return {"ok": False, "error": f"invalid JSON arguments: {exc}"}
-        handler = getattr(self, f"_{name}", None)
-        if handler is None:
+        if name not in TOOL_NAMES:
             return {"ok": False, "error": f"unknown tool {name!r}"}
+        handler = getattr(self, f"_{name}")
         return await handler(args)
 
     # --- update_case -----------------------------------------------------------------------------
@@ -245,7 +248,7 @@ class ToolExecutor:
         for name, raw in args.items():
             if raw is None or raw == "":
                 continue
-            if name not in type(case).model_fields or name in {"id", "status", "ticket_id", "scenario"}:
+            if name not in _WRITABLE or name not in type(case).model_fields:
                 ignored.append(name)
                 continue
             try:
@@ -315,7 +318,8 @@ class ToolExecutor:
             if name == "trip_confirmed" and raw and not getattr(case, "found_trip", None):
                 raise ValueError("there is no found trip to confirm; call find_trip first")
             return raw
-        text = str(raw).strip()
+        # one line: customer text is rendered into the system prompt and must not fake extra lines there
+        text = " ".join(str(raw).split())
         if len(text) > _TEXT_LIMIT:
             text = text[:_TEXT_LIMIT]
         return text
@@ -432,6 +436,8 @@ class ToolExecutor:
             return {"ok": False, "error": f"cannot create the ticket, missing: {', '.join(missing)}"}
         if not case.trip_lookup_done:
             return {"ok": False, "error": "call find_trip before creating the ticket"}
+        if case.found_trip and not case.trip_confirmed:
+            return {"ok": False, "error": "confirm the found trip with the customer first (date, time, route)"}
 
         priority = Priority.NORMAL
         if isinstance(case, DriverComplaintCase) and (
@@ -509,6 +515,8 @@ async def handoff(ctx: ToolContext, reason: str, priority: Priority) -> str:
     state = ctx.state
     if state.handoff:
         return state.handoff.ticket_id
+    if state.safety_alert:
+        priority = Priority.URGENT  # whoever triggers the handoff, a safety incident is always urgent
     case = state.active_case
     fields: dict[str, Any] = {"reason": reason}
     if case is not None:

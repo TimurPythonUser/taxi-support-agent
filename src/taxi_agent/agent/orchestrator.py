@@ -26,6 +26,7 @@ from taxi_agent.kb import KnowledgeBase
 from taxi_agent.llm import LLMClient, LLMError, Usage
 from taxi_agent.storage import SQLiteStore
 
+_MAX_FROZEN_HISTORY = 400  # messages kept for a handed-off session; later pings are answered but not stored
 _PROGRESS_TOOLS = {"find_trip", "get_trip_price", "search_knowledge_base", "create_operator_ticket", "add_ticket_note"}
 
 
@@ -80,6 +81,8 @@ class Agent:
         return state
 
     async def handle_message(self, session_id: str, text: str) -> TurnResult:
+        if await self.store.load(session_id) is None:  # no lock objects for unknown ids
+            raise SessionNotFound(session_id)
         lock = self._locks.setdefault(session_id, asyncio.Lock())
         async with lock:
             loaded = await self.store.load(session_id)
@@ -110,24 +113,41 @@ class Agent:
             messages.append({"role": "assistant", "content": reply})
             return TurnResult(reply=reply, state=state, events=events)
 
+        async def safety_handoff(reply: str | None = None) -> TurnResult:
+            ticket_id = await handoff(ctx, "Сообщение о возможной угрозе безопасности", Priority.URGENT)
+            events.append(TurnEvent("guardrail", "safety_forced_handoff", result={"ticket_id": ticket_id}))
+            notice = guardrails.fixed("safety_forced", state.language)
+            return finish(f"{reply}\n\n{notice}" if reply else notice)
+
         if state.status == SessionStatus.HANDED_OFF:
+            if len(messages) > _MAX_FROZEN_HISTORY:
+                messages.pop()  # keep the stored history of a frozen session bounded
+                return TurnResult(guardrails.fixed("handed_off", state.language), state, events)
             events.append(TurnEvent("guardrail", "already_handed_off"))
             return finish(guardrails.fixed("handed_off", state.language))
+
+        # Safety first: it must win over every other early exit (limits, human request, model errors).
+        if guardrails.is_safety_incident(text):
+            state.safety_alert = True
+            events.append(TurnEvent("guardrail", "safety_keywords"))
+
         if state.user_turns >= self.settings.max_messages_per_session:
+            if state.safety_alert:
+                return await safety_handoff()
             events.append(TurnEvent("guardrail", "session_limit"))
             return finish(guardrails.fixed("session_limit", state.language))
         state.user_turns += 1
 
         if guardrails.wants_human(text):
+            if state.safety_alert:
+                return await safety_handoff()
             ticket_id = await handoff(ctx, "Клиент попросил соединить с оператором", Priority.NORMAL)
             events.append(TurnEvent("guardrail", "human_requested", result={"ticket_id": ticket_id}))
             return finish(guardrails.fixed("human_requested", state.language))
 
-        if guardrails.is_safety_incident(text):
-            state.safety_alert = True
-            events.append(TurnEvent("guardrail", "safety_keywords"))
-
         if await self.store.count_request(now.date()) > self.settings.daily_request_limit:
+            if state.safety_alert:
+                return await safety_handoff()
             events.append(TurnEvent("guardrail", "daily_limit"))
             return finish(guardrails.fixed("daily_limit", state.language))
 
@@ -144,6 +164,11 @@ class Agent:
         elif state.consecutive_failures == failures_before:
             state.consecutive_failures = 0  # a clean turn resets the streak
 
+        if reply is None and state.status == SessionStatus.HANDED_OFF:
+            # the model handed off but failed to phrase the final message
+            reply = guardrails.fixed("handed_off", state.language)
+        if state.safety_alert and state.status != SessionStatus.HANDED_OFF and reply is None:
+            return await safety_handoff()
         if state.consecutive_failures >= 2 and state.status != SessionStatus.HANDED_OFF:
             ticket_id = await handoff(ctx, "Повторяющийся технический сбой (модель или внешний API)", Priority.NORMAL)
             events.append(TurnEvent("guardrail", "technical_handoff", result={"ticket_id": ticket_id}))
@@ -154,9 +179,7 @@ class Agent:
         reply = await self._check_prices(reply, state, messages, events)
 
         if state.safety_alert and state.status != SessionStatus.HANDED_OFF:
-            ticket_id = await handoff(ctx, "Сообщение о возможной угрозе безопасности", Priority.URGENT)
-            events.append(TurnEvent("guardrail", "safety_forced_handoff", result={"ticket_id": ticket_id}))
-            reply = f"{reply}\n\n{guardrails.fixed('safety_forced', state.language)}"
+            return await safety_handoff(reply)
 
         if state.status != SessionStatus.HANDED_OFF:
             after = state.missing_snapshot()
@@ -201,7 +224,10 @@ class Agent:
                 messages.append({"role": "tool", "tool_call_id": call.id, "content": guardrails.tool_payload(result)})
             if state.status == SessionStatus.HANDED_OFF:
                 # one more round so the model phrases the handoff message itself
-                final = await self._complete(state, messages, tools=False)
+                try:
+                    final = await self._complete(state, messages, tools=False)
+                except LLMError:
+                    return guardrails.fixed("handed_off", state.language)
                 return (final.content or "").strip() or guardrails.fixed("handed_off", state.language)
         # Too many rounds: stop calling tools and let the model answer from what it already has.
         events.append(TurnEvent("guardrail", "tool_loop_limit"))

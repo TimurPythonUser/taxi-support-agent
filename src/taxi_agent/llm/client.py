@@ -62,6 +62,9 @@ class OpenAICompatClient:
             max_retries=settings.llm_max_retries,
         )
 
+    async def aclose(self) -> None:
+        await self._client.close()
+
     async def complete(self, messages: list[dict[str, Any]], tools: list[dict[str, Any]]) -> LLMResponse:
         s = self._settings
         try:

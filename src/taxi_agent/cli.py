@@ -2,7 +2,9 @@
 
 import argparse
 import asyncio
+import getpass
 import json
+import os
 import sys
 from typing import Any
 
@@ -52,6 +54,8 @@ async def _chat_local(debug: bool) -> None:
 
 
 def _chat_remote(url: str, user: str | None, password: str | None, debug: bool) -> None:
+    if user and not password:
+        password = os.environ.get("TAXI_AGENT_PASSWORD") or getpass.getpass(f"Password for {user}: ")
     auth = (user, password) if user else None
     with httpx.Client(base_url=url.rstrip("/"), auth=auth, timeout=90) as client:
         resp = client.post("/api/sessions")
@@ -80,7 +84,7 @@ def main(argv: list[str] | None = None) -> None:
     chat = sub.add_parser("chat", help="chat with the agent in the terminal")
     chat.add_argument("--url", help="base URL of a running API; omit to run the agent in-process")
     chat.add_argument("--user", help="Basic Auth user for --url")
-    chat.add_argument("--password", help="Basic Auth password for --url")
+    chat.add_argument("--password", help="Basic Auth password (better: TAXI_AGENT_PASSWORD env or the prompt)")
     chat.add_argument("--debug", action="store_true", help="show tool calls and missing fields")
 
     serve = sub.add_parser("serve", help="run the HTTP API and web UI")

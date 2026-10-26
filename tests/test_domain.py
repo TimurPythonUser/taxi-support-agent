@@ -95,7 +95,7 @@ class TestPricingStub:
 class TestOrdersStub:
     @pytest.fixture
     def orders(self):
-        return StubOrderRepository(KYIV, "UAH", now=NOW)
+        return StubOrderRepository(KYIV, "UAH", clock=lambda: NOW)
 
     async def test_get_by_id(self, orders):
         trip = await orders.get("731842")

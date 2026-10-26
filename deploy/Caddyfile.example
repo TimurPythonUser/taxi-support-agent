@@ -1,0 +1,33 @@
+# Reverse proxy in front of the agent: HTTPS (automatic), Basic Auth, security headers.
+# The caddy container must share a docker network with the agent (taxi-net, see docker-compose.yml).
+# Password hash: `caddy hash-password` (bcrypt).
+taxi.example.com {
+	basic_auth {
+		reviewer $2a$14$REPLACE_WITH_BCRYPT_HASH
+	}
+
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "no-referrer"
+		Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=(), usb=()"
+		-Server
+	}
+
+	# Swagger UI needs its CDN and an inline bootstrap script; everything else is strict.
+	@docs path /docs /docs/* /redoc
+	header @docs Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; img-src 'self' data: https://fastapi.tiangolo.com; connect-src 'self'; frame-ancestors 'none'"
+	@app not path /docs /docs/* /redoc
+	header @app Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'; frame-ancestors 'none'"
+
+	encode zstd gzip
+	reverse_proxy taxi-agent:8000
+
+	log {
+		output file /data/taxi-agent-access.log {
+			roll_size 10mb
+			roll_keep 3
+		}
+	}
+}

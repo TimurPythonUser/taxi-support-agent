@@ -6,14 +6,18 @@ from typing import Any
 
 _FLAGS = re.IGNORECASE | re.UNICODE
 
-# Customer explicitly asks for a human.
+# Customer explicitly asks for a human. "человек" alone is too broad ("хочу, чтобы этого человека уволили"),
+# so it counts only after verbs that mean "bring/connect" or in "talk to a person".
+_STAFF = r"(оператор\w*|менеджер\w*|специалист\w*|фахівц\w*)"
 _HUMAN_REQUEST = [
     re.compile(p, _FLAGS)
     for p in (
         r"\b(жив\w*|реальн\w*|настоящ\w*|справжн\w*)\s+(человек\w*|людин\w*|оператор\w*)",
-        r"\b(позов\w*|соедин\w*|переключ\w*|переве\w*|подключ\w*|дайте|хочу|нужен|нужна|можно|"
-        r"з'?єдна\w*|покли\w*|потрібен|потрібна)\b\W+(?:\w+\W+){0,3}?"
-        r"(оператор\w*|человек\w*|менеджер\w*|специалист\w*|людин\w*|фахівц\w*|сотрудник\w*)",
+        r"\b(позов\w*|соедин\w*|переключ\w*|переве\w*|подключ\w*|дайте|з'?єдна\w*|покли\w*)\b\W+"
+        r"(?:\w+\W+){0,3}?(оператор\w*|менеджер\w*|специалист\w*|фахівц\w*|человек\w*|людин\w*|сотрудник\w*)",
+        r"\b(хочу|нужен|нужна|можно|потрібен|потрібна)\b\W+(?:\w+\W+){0,3}?" + _STAFF,
+        r"\b(поговор\w*|говорить|пообща\w*|поспілкува\w*)\s+(?:с|з|со)\s+(?:живым\s+|живою\s+)?"
+        r"(человеком|людиною|оператором|менеджером)",
         r"\b(talk|speak|chat|connect)\w*\s+(?:me\s+)?(?:to|with)\s+(?:a\s+|an\s+|the\s+)?"
         r"(human|person|operator|agent|manager|someone)",
         r"\b(real|live)\s+(person|human|agent|operator)",
@@ -22,12 +26,13 @@ _HUMAN_REQUEST = [
 ]
 
 # Safety incidents: accident, violence, threats, harassment, drunk driving (ru / uk / en stems).
+# Kept narrow on purpose: a false alarm freezes the dialog with an urgent handoff.
 _SAFETY = re.compile(
-    r"\b(дтп|авари\w*|аварі\w*|столкн\w*|врезал\w*|угрож\w*|погрож\w*|ударил\w*|удари\w*|вдари\w*|"
-    r"избил\w*|побив\w*|напал\w*|напав\w*|насили\w*|насильств\w*|домога\w*|приставал\w*|лапал\w*|"
-    r"изнасил\w*|нож\w*|пистолет\w*|оруж\w*|зброя\w*|пьян\w*|п'ян\w*|пʼян\w*|нетрезв\w*|"
-    r"под кайфом|наркот\w*|травм\w*|кров\w*|accident|crash\w*|threat\w*|assault\w*|harass\w*|"
-    r"drunk|weapon|knife|gun|attack\w*|injur\w*|hit me|grop\w*)\b",
+    r"\b(дтп|авари\w*|аварі\w*|столкновени\w*|врезал\w*|врізав\w*|угрож\w*|погрож\w*|ударил\w*|"
+    r"вдарив\w*|избил\w*|побив\w*|напал\w*|напав\w*|насили\w*|насильств\w*|домога\w*|приставал\w*|"
+    r"лапал\w*|изнасил\w*|нож|ножом|пистолет\w*|оруж\w*|зброя\w*|пьян\w*|п'ян\w*|пʼян\w*|нетрезв\w*|"
+    r"под кайфом|наркот\w*|травм\w*|кровь|крови|кровью|accident|car crash|crashed into|threat\w*|"
+    r"assault\w*|harass\w*|drunk|weapon|knife|gun|attacked|injur\w*|hit me|grop\w*)\b",
     _FLAGS,
 )
 
@@ -37,7 +42,6 @@ _AMOUNT_AFTER = re.compile(
     _FLAGS,
 )
 _AMOUNT_BEFORE = re.compile(r"(₴|\$|€|uah|usd|eur)\s*(\d[\d\s ]{0,6}\d|\d)", _FLAGS)
-_INT = re.compile(r"\d+")
 
 
 def wants_human(text: str) -> bool:
@@ -81,12 +85,28 @@ def mentioned_amounts(text: str) -> set[int]:
 
 
 def grounded_numbers(messages: list[dict[str, Any]]) -> set[int]:
-    """Every integer that came from a tool result (quotes, trips, knowledge-base policies)."""
-    numbers: set[int] = set()
+    """Money amounts that came from tool results: `price` fields and amounts with a currency in texts."""
+    amounts: set[int] = set()
+
+    def walk(node: Any, key: str = "") -> None:
+        if isinstance(node, dict):
+            for k, v in node.items():
+                walk(v, k)
+        elif isinstance(node, list):
+            for v in node:
+                walk(v, key)
+        elif key == "price" and isinstance(node, int | float):
+            amounts.add(int(node))
+        elif isinstance(node, str):
+            amounts.update(mentioned_amounts(node))
+
     for msg in messages:
         if msg.get("role") == "tool":
-            numbers |= {int(n) for n in _INT.findall(str(msg.get("content", "")))}
-    return numbers
+            try:
+                walk(json.loads(msg.get("content") or "{}"))
+            except ValueError:
+                continue
+    return amounts
 
 
 def unverified_amounts(reply: str, grounded: set[int]) -> set[int]:
@@ -94,12 +114,21 @@ def unverified_amounts(reply: str, grounded: set[int]) -> set[int]:
     return mentioned_amounts(reply) - grounded
 
 
-def digits_said_by_customer(messages: list[dict[str, Any]]) -> list[str]:
-    return [re.sub(r"\D", "", str(m.get("content", ""))) for m in messages if m.get("role") == "user"]
+_DIGIT_GROUP = re.compile(r"\d+(?:[  -]\d+)*")
+
+
+def number_candidates(text: str) -> set[str]:
+    """Whole numbers the customer typed: "№ 731-842" → {"731", "842", "731842"}; never a slice of a phone."""
+    out: set[str] = set()
+    for group in _DIGIT_GROUP.findall(text):
+        runs = re.findall(r"\d+", group)
+        out.update(runs)
+        out.add("".join(runs))
+    return out
 
 
 def is_grounded_order_id(order_id: str, messages: list[dict[str, Any]]) -> bool:
-    return any(order_id in digits for digits in digits_said_by_customer(messages))
+    return any(order_id in number_candidates(str(m.get("content", ""))) for m in messages if m.get("role") == "user")
 
 
 def tool_payload(result: dict[str, Any]) -> str:

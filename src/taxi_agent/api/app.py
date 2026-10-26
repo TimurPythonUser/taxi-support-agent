@@ -31,6 +31,8 @@ def create_app(settings: Settings | None = None, agent: Agent | None = None) -> 
     async def lifespan(app: FastAPI):
         app.state.agent = agent or build_agent(settings)
         yield
+        if close := getattr(app.state.agent.llm, "aclose", None):
+            await close()
 
     app = FastAPI(
         title="Taxi support agent",

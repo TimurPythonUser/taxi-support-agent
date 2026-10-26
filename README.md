@@ -34,6 +34,17 @@ Docker:
 docker compose up --build   # http://127.0.0.1:8000, данные в volume taxi-data
 ```
 
+### Деплой
+
+Демо работает на VPS: контейнер из `docker-compose.yml` без публичных портов, перед ним Caddy в той же docker-сети `taxi-net`. Caddy даёт HTTPS, Basic Auth и строгие заголовки безопасности. Пример блока лежит в [`deploy/Caddyfile.example`](deploy/Caddyfile.example).
+
+```bash
+git clone <repo> ~/taxi-agent && cd ~/taxi-agent
+printf 'LLM_API_KEY=%s\n' "$KEY" > .env && chmod 600 .env
+docker compose up -d --build
+docker network connect taxi-net caddy   # затем блок в Caddyfile и `caddy reload`
+```
+
 ## Модель
 
 По умолчанию DeepSeek Flash (`deepseek-flash`) без reasoning. Клиент — официальный `openai` SDK, поэтому подходит любой OpenAI-совместимый провайдер. Модель меняется в `.env`, код не трогается:
@@ -74,7 +85,7 @@ LLM_EXTRA_BODY={}
 ## Проверка качества
 
 ```bash
-uv run pytest                              # 101 офлайн-тест, фейковая модель, ~4 с
+uv run pytest                              # 120 офлайн-тестов, фейковая модель, ~5 с
 uv run python -m evals.run --runs 3        # live-eval: 15 сценариев, симулятор клиента + LLM-судья
 ```
 

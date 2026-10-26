@@ -1,5 +1,7 @@
 """The agent loop with a scripted model: control flow and deterministic guardrails."""
 
+import pytest
+
 from taxi_agent.agent.state import SessionStatus
 from taxi_agent.integrations.pricing import UnavailablePriceProvider
 from taxi_agent.llm import LLMError
@@ -206,3 +208,35 @@ async def test_tool_loop_limit_ends_with_a_plain_answer(settings, fake_llm: Fake
     assert turn.reply == "Первые 3 минуты ожидания бесплатны."
     assert any(e.name == "tool_loop_limit" for e in turn.events)
     assert fake_llm.tool_flags == [True, True, False]
+
+
+async def test_safety_wins_over_a_human_request(agent, fake_llm: FakeLLM):
+    sid = await start(agent)
+    turn = await agent.handle_message(sid, "Водитель меня ударил, позовите оператора")
+    assert turn.state.handoff.priority == "urgent"
+    assert "112" in turn.reply and fake_llm.requests == []
+
+
+async def test_safety_survives_a_model_failure(agent, fake_llm: FakeLLM):
+    sid = await start(agent)
+    fake_llm.extend(LLMError("timeout"))
+    turn = await agent.handle_message(sid, "Водитель был пьяный")
+    assert turn.state.handoff.priority == "urgent" and "112" in turn.reply
+
+
+async def test_safety_survives_the_session_limit(settings, fake_llm: FakeLLM):
+    from taxi_agent.factory import build_agent
+
+    settings.max_messages_per_session = 0
+    agent = build_agent(settings, llm=fake_llm, clock=lambda: NOW)
+    sid = await start(agent)
+    turn = await agent.handle_message(sid, "Водитель мне угрожал")
+    assert turn.state.handoff.priority == "urgent"
+
+
+async def test_unknown_session_creates_no_lock(agent):
+    from taxi_agent.agent.orchestrator import SessionNotFound
+
+    with pytest.raises(SessionNotFound):
+        await agent.handle_message("nope", "hi")
+    assert "nope" not in agent._locks

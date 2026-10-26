@@ -24,7 +24,7 @@ def build_agent(
         llm=llm or OpenAICompatClient(settings),
         store=store,
         tickets=SQLiteTicketSink(store),
-        orders=orders or StubOrderRepository(settings.tz, settings.currency, now=clock() if clock else None),
+        orders=orders or StubOrderRepository(settings.tz, settings.currency, clock=clock),
         pricing=pricing or StubPriceProvider(settings.currency),
         kb=KnowledgeBase(settings.knowledge_base_dir),
         clock=clock,

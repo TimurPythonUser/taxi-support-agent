@@ -1,3 +1,4 @@
+from collections.abc import Callable
 from datetime import date, datetime, time, timedelta
 from typing import Protocol
 from zoneinfo import ZoneInfo
@@ -37,37 +38,41 @@ _FIXTURES = [
 
 
 class StubOrderRepository:
-    """Fake order history. Dates are relative to "now", so "yesterday evening" always works in the demo."""
+    """Fake order history. Dates are rebuilt relative to "now" on every call, so "yesterday evening"
+    works on any day, including in a container that has been running for weeks."""
 
     SEARCH_WINDOW = timedelta(minutes=75)
 
-    def __init__(self, tz: ZoneInfo, currency: str, now: datetime | None = None) -> None:
-        now = now or datetime.now(tz)
-        self._trips: dict[str, Trip] = {}
+    def __init__(self, tz: ZoneInfo, currency: str, clock: Callable[[], datetime] | None = None) -> None:
+        self._currency = currency
+        self._clock = clock or (lambda: datetime.now(tz))
+
+    def _trips(self) -> dict[str, Trip]:
+        now = self._clock()
+        trips: dict[str, Trip] = {}
         for days_ago, hhmm, order_id, origin, destination, driver, car, price in _FIXTURES:
             moment = now - timedelta(hours=2) if hhmm is None else None
-            trip_date = moment.date() if moment else (now - timedelta(days=days_ago)).date()
-            trip_time = moment.strftime("%H:%M") if moment else hhmm
-            self._trips[order_id] = Trip(
+            trips[order_id] = Trip(
                 order_id=order_id,
-                date=trip_date,
-                time=trip_time,
+                date=moment.date() if moment else (now - timedelta(days=days_ago)).date(),
+                time=moment.strftime("%H:%M") if moment else hhmm,
                 origin=origin,
                 destination=destination,
                 driver_name=driver,
                 car=car,
                 price=price,
-                currency=currency,
+                currency=self._currency,
             )
+        return trips
 
     async def get(self, order_id: str) -> Trip | None:
-        return self._trips.get(order_id)
+        return self._trips().get(order_id)
 
     async def search(self, trip_date: date, approx_time: str, route: str | None) -> list[Trip]:
         target = datetime.combine(trip_date, time.fromisoformat(approx_time))
         matches = [
             t
-            for t in self._trips.values()
+            for t in self._trips().values()
             if abs(datetime.combine(t.date, time.fromisoformat(t.time)) - target) <= self.SEARCH_WINDOW
         ]
         if len(matches) > 1 and route:
@@ -77,4 +82,4 @@ class StubOrderRepository:
         return sorted(matches, key=lambda t: (t.date, t.time))
 
     def all(self) -> list[Trip]:
-        return list(self._trips.values())
+        return list(self._trips().values())
